@@ -24,14 +24,11 @@ from amaranth.hdl import Value, ValueCastable
 from amaranth.hdl._ir import Fragment
 from amaranth.sim import Simulator
 
+from .errors import SimulationRequestError
 from .loader import load_definitions_module, select_elaboratable_class
 
 DEFAULT_CLOCKS: dict[str, float] = {"sync": 1e-6}
 WORKER_TIMEOUT_SECONDS = 30.0
-
-
-class SimulationRequestError(Exception):
-    """An expected user-correctable simulation error."""
 
 
 @dataclass(frozen=True)
@@ -222,9 +219,20 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         raise SimulationRequestError("definitions mode requires at least one clock domain.")
 
     started_at = time.perf_counter()
+    try:
+        module, loader_path_entries = load_definitions_module(file_path)
+    except SimulationRequestError:
+        raise
+    except SyntaxError as exc:
+        raise SimulationRequestError(
+            f"Syntax error in '{file_path}' at line {exc.lineno}: {exc.msg}"
+        ) from exc
+    except Exception as exc:
+        raise SimulationRequestError(
+            f"Failed to load '{file_path}': {type(exc).__name__}: {exc}"
+        ) from exc
 
-    with _temporary_cwd(file_path.parent):
-        module = load_definitions_module(file_path)
+    with _temporary_cwd(file_path.parent), _temporary_sys_path(loader_path_entries):
         try:
             dut_class = select_elaboratable_class(module, class_name)
         except ValueError as exc:

@@ -14,9 +14,18 @@ from typing import Iterator
 
 from amaranth.hdl import Elaboratable
 
+from .errors import SimulationRequestError
 
-def load_definitions_module(file_path: str | Path) -> types.ModuleType:
-    """Load a Python module after stripping top-level executable statements."""
+
+def load_definitions_module(
+    file_path: str | Path,
+) -> tuple[types.ModuleType, list[str]]:
+    """Load a Python module after stripping top-level executable statements.
+
+    Returns the loaded module and the list of sys.path entries prepended during
+    import. Callers should keep those entries active while using the module,
+    because lazy imports inside methods may not fire until later.
+    """
 
     path = Path(file_path).expanduser().resolve(strict=True)
     source = path.read_text(encoding="utf-8")
@@ -43,13 +52,19 @@ def load_definitions_module(file_path: str | Path) -> types.ModuleType:
     try:
         with _temporary_sys_path(extra_paths):
             exec(code, module.__dict__)
+    except ImportError as exc:
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
+        raise SimulationRequestError(_format_import_error(path, exc, extra_paths)) from exc
     finally:
         if previous_module is None:
             sys.modules.pop(module_name, None)
         else:
             sys.modules[module_name] = previous_module
 
-    return module
+    return module, extra_paths
 
 
 def find_elaboratable_classes(module: types.ModuleType) -> dict[str, type[Elaboratable]]:
@@ -167,6 +182,20 @@ def _dedupe_paths(paths: list[str]) -> list[str]:
         seen.add(entry)
         ordered.append(entry)
     return ordered
+
+
+def _format_import_error(path: Path, exc: ImportError, extra_paths: list[str]) -> str:
+    missing = getattr(exc, "name", None) or "unknown"
+    paths_display = "\n  ".join(extra_paths) if extra_paths else "(none)"
+    return (
+        f"Failed to import '{path}': {type(exc).__name__}: {exc}\n\n"
+        f"The module '{missing}' could not be found.\n"
+        f"sys.path entries added by the loader:\n  {paths_display}\n\n"
+        f"If '{missing}' lives outside the file's directory or its enclosing "
+        f"package, v1 does not add higher directories to sys.path. Move the "
+        f"import target into the project root, or install it into the Python "
+        f"environment used to run the server."
+    )
 
 
 @contextlib.contextmanager
