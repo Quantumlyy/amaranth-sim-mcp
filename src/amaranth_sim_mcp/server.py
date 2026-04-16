@@ -1,8 +1,82 @@
 """FastMCP server entry point."""
 
+from __future__ import annotations
+
+import importlib.metadata
+import platform
+import sys
+from pathlib import Path
+from typing import Any
+
+import amaranth
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+
+from . import __version__
+from .runner import SimulationRequestError, run_simulation_request
 
 mcp = FastMCP("amaranth-sim-mcp")
+
+
+@mcp.tool()
+def simulate(
+    file_path: str,
+    mode: str,
+    class_name: str | None = None,
+    init_kwargs: dict[str, Any] | None = None,
+    clocks: dict[str, float] | None = None,
+    observe: list[str] | None = None,
+    stimulus: list[dict[str, Any]] | None = None,
+    cycles: int = 100,
+) -> dict[str, Any]:
+    """
+    Run an Amaranth simulation in either `script` or `definitions` mode.
+
+    The agent is expected to read the user's code and choose `class_name`,
+    `init_kwargs`, `clocks`, `observe`, and `stimulus` based on what it finds.
+
+    Use `mode="script"` when the file already contains its own `Simulator(...)`
+    setup and `sim.run()` or `sim.run_until(...)` calls and should be executed
+    unmodified.
+
+    Use `mode="definitions"` when the file defines one or more Elaboratable
+    classes and you want this server to instantiate the DUT and build a simple
+    generated testbench.
+
+    Signal paths are dotted for nested submodules, for example `alu.result`.
+
+    Stimulus events use this format:
+    `{"cycle": 3, "domain": "sync", "set": {"en": 1, "alu.op": 2}}`
+    """
+
+    try:
+        return run_simulation_request(
+            file_path=file_path,
+            mode=mode,
+            class_name=class_name,
+            init_kwargs=init_kwargs,
+            clocks=clocks,
+            observe=observe,
+            stimulus=stimulus,
+            cycles=cycles,
+        )
+    except SimulationRequestError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+def check_environment() -> dict[str, str]:
+    """Return Python, Amaranth, MCP, and server version details."""
+
+    return {
+        "python_version": platform.python_version(),
+        "python_executable": sys.executable,
+        "platform": platform.platform(),
+        "amaranth_version": amaranth.__version__,
+        "mcp_version": importlib.metadata.version("mcp"),
+        "server_version": __version__,
+        "cwd": str(Path.cwd()),
+    }
 
 
 def main() -> None:
