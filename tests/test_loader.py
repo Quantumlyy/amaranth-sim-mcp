@@ -39,13 +39,14 @@ def test_load_definitions_module_strips_top_level_side_effects(tmp_path):
         encoding="utf-8",
     )
 
-    module = load_definitions_module(module_path)
+    module, extra_paths = load_definitions_module(module_path)
 
     assert module.RAN == []
     assert not hasattr(module, "DROPPED")
     assert module.CONST == 7
     assert module.helper() == 7
     assert module.Counter.__name__ == "Counter"
+    assert extra_paths == [str(tmp_path.resolve())]
 
 
 def test_load_definitions_module_supports_same_directory_imports(tmp_path):
@@ -74,10 +75,11 @@ def test_load_definitions_module_supports_same_directory_imports(tmp_path):
         encoding="utf-8",
     )
 
-    module = load_definitions_module(module_path)
+    module, extra_paths = load_definitions_module(module_path)
 
     assert module.OFFSET_VALUE == 3
     assert module.Counter.__name__ == "Counter"
+    assert extra_paths == [str(tmp_path.resolve())]
 
 
 def test_select_elaboratable_class_auto_selects_single_class(tmp_path):
@@ -97,7 +99,7 @@ def test_select_elaboratable_class_auto_selects_single_class(tmp_path):
         encoding="utf-8",
     )
 
-    module = load_definitions_module(module_path)
+    module, _ = load_definitions_module(module_path)
     selected = select_elaboratable_class(module, None)
 
     assert selected.__name__ == "Counter"
@@ -126,7 +128,7 @@ def test_select_elaboratable_class_lists_available_classes_for_missing_name(tmp_
         encoding="utf-8",
     )
 
-    module = load_definitions_module(module_path)
+    module, _ = load_definitions_module(module_path)
 
     with pytest.raises(ValueError) as exc_info:
         select_elaboratable_class(module, "Missing")

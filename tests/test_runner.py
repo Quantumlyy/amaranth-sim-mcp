@@ -29,6 +29,57 @@ class Counter(Elaboratable):
 """
 
 
+TOP_LEVEL_IMPORT_SOURCE = """\
+from helper import STEP
+from amaranth import Elaboratable, ClockDomain, Module, Signal
+
+
+class Counter(Elaboratable):
+    def __init__(self):
+        self.count = Signal(8)
+
+    def elaborate(self, platform):
+        m = Module()
+        m.domains.sync = ClockDomain()
+        m.d.sync += self.count.eq(self.count + STEP)
+        return m
+"""
+
+
+LAZY_IMPORT_SOURCE = """\
+from amaranth import Elaboratable, ClockDomain, Module, Signal
+
+
+class Counter(Elaboratable):
+    def __init__(self):
+        self.count = Signal(8)
+
+    def elaborate(self, platform):
+        from helper import STEP
+        m = Module()
+        m.domains.sync = ClockDomain()
+        m.d.sync += self.count.eq(self.count + STEP)
+        return m
+"""
+
+
+PACKAGE_IMPORT_SOURCE = """\
+from .helpers import STEP
+from amaranth import Elaboratable, ClockDomain, Module, Signal
+
+
+class Counter(Elaboratable):
+    def __init__(self):
+        self.count = Signal(8)
+
+    def elaborate(self, platform):
+        m = Module()
+        m.domains.sync = ClockDomain()
+        m.d.sync += self.count.eq(self.count + STEP)
+        return m
+"""
+
+
 FAST_COUNTER_SOURCE = """\
 from amaranth import Elaboratable, ClockDomain, Module, Signal
 
@@ -120,6 +171,40 @@ def test_run_simulation_request_definitions_mode_returns_post_tick_trace(tmp_pat
     Path(result["vcd_path"]).unlink(missing_ok=True)
 
 
+def test_run_simulation_request_definitions_mode_supports_loose_file_sibling_imports(tmp_path):
+    helper_path = tmp_path / "helper.py"
+    helper_path.write_text("STEP = 1\n", encoding="utf-8")
+    design_path = tmp_path / "main.py"
+    design_path.write_text(textwrap.dedent(TOP_LEVEL_IMPORT_SOURCE), encoding="utf-8")
+
+    result = run_simulation_request(
+        design_path,
+        "definitions",
+        observe=["count"],
+        cycles=3,
+    )
+
+    assert [sample["signals"]["count"] for sample in result["trace"]] == [1, 2, 3]
+    Path(result["vcd_path"]).unlink(missing_ok=True)
+
+
+def test_run_simulation_request_definitions_mode_supports_lazy_imports_during_simulation(tmp_path):
+    helper_path = tmp_path / "helper.py"
+    helper_path.write_text("STEP = 1\n", encoding="utf-8")
+    design_path = tmp_path / "main.py"
+    design_path.write_text(textwrap.dedent(LAZY_IMPORT_SOURCE), encoding="utf-8")
+
+    result = run_simulation_request(
+        design_path,
+        "definitions",
+        observe=["count"],
+        cycles=3,
+    )
+
+    assert [sample["signals"]["count"] for sample in result["trace"]] == [1, 2, 3]
+    Path(result["vcd_path"]).unlink(missing_ok=True)
+
+
 def test_run_simulation_request_rejects_non_python_files(tmp_path):
     design_path = tmp_path / "counter.txt"
     design_path.write_text("print('hello')\n", encoding="utf-8")
@@ -163,6 +248,57 @@ def test_run_simulation_request_reports_missing_observe_signal_paths(tmp_path):
     assert "count" in message
 
 
+def test_run_simulation_request_reports_structured_missing_import_errors(tmp_path):
+    design_path = tmp_path / "main.py"
+    design_path.write_text(
+        textwrap.dedent(
+            """\
+            import nonexistent_module_xyz
+            from amaranth import Elaboratable, ClockDomain, Module
+
+            class Counter(Elaboratable):
+                def elaborate(self, platform):
+                    m = Module()
+                    m.domains.sync = ClockDomain()
+                    return m
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SimulationRequestError) as exc_info:
+        run_simulation_request(design_path, "definitions")
+
+    message = str(exc_info.value)
+    assert "Failed to import" in message
+    assert "nonexistent_module_xyz" in message
+    assert "sys.path entries added by the loader:" in message
+    assert str(tmp_path.resolve()) in message
+    assert "install it into the Python environment used to run the server" in message
+
+
+def test_run_simulation_request_reports_structured_syntax_errors(tmp_path):
+    design_path = tmp_path / "main.py"
+    design_path.write_text(
+        textwrap.dedent(
+            """\
+            from amaranth import Elaboratable
+
+            class Counter(Elaboratable)
+                pass
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SimulationRequestError) as exc_info:
+        run_simulation_request(design_path, "definitions")
+
+    message = str(exc_info.value)
+    assert f"Syntax error in '{design_path.resolve()}'" in message
+    assert "line 3" in message
+
+
 def test_run_simulation_request_reports_nested_available_attributes(tmp_path):
     design_path = tmp_path / "nested.py"
     design_path.write_text(textwrap.dedent(NESTED_COUNTER_SOURCE), encoding="utf-8")
@@ -181,6 +317,25 @@ def test_run_simulation_request_reports_nested_available_attributes(tmp_path):
     assert "result" in message
     assert "valid" in message
     assert "en" not in message
+
+
+def test_run_simulation_request_definitions_mode_supports_nested_package_layouts(tmp_path):
+    package_dir = tmp_path / "my_pkg"
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "helpers.py").write_text("STEP = 1\n", encoding="utf-8")
+    design_path = package_dir / "design.py"
+    design_path.write_text(textwrap.dedent(PACKAGE_IMPORT_SOURCE), encoding="utf-8")
+
+    result = run_simulation_request(
+        design_path,
+        "definitions",
+        observe=["count"],
+        cycles=3,
+    )
+
+    assert [sample["signals"]["count"] for sample in result["trace"]] == [1, 2, 3]
+    Path(result["vcd_path"]).unlink(missing_ok=True)
 
 
 def test_run_simulation_request_reports_missing_stimulus_signal_paths(tmp_path):

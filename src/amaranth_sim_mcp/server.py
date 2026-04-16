@@ -69,6 +69,9 @@ def simulate(
     generated testbench.
 
     Signal paths are dotted for nested submodules, for example `alu.result`.
+    Files may import from sibling modules in the same directory or enclosing
+    package; imports from higher directories or external locations must be
+    installed in the server's environment.
 
     Stimulus events use this format:
     `{"cycle": 3, "domain": "sync", "set": {"en": 1, "alu.op": 2}}`

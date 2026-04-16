@@ -105,3 +105,12 @@ In v1, `domain` must be omitted or match the selected primary clock domain.
 Multi-domain stimulus timing is not synchronized yet.
 
 For `definitions` mode, recorded samples use post-tick semantics: events for cycle `N` are applied before that cycle's tick, and observations for cycle `N` are captured after the tick.
+
+## Import Resolution In Definitions Mode
+
+The loader prepends the user file's directory and, for package-nested files,
+the enclosing package root to `sys.path` for both the initial import and the
+entire simulation run. Imports from higher up the directory tree or from
+sibling projects are not resolved automatically; install those dependencies in
+the server's Python environment or restructure the project so imports resolve
+from the file's directory or its package root.
