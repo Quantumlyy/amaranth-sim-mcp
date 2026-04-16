@@ -11,6 +11,7 @@ import runpy
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 from collections import defaultdict
@@ -85,6 +86,7 @@ def run_simulation_request(
         "observe": list(observe) if observe is not None else None,
         "stimulus": list(stimulus or []),
         "cycles": cycles,
+        "timeout_seconds": timeout_seconds,
     }
 
     progress_path = _create_progress_file()
@@ -140,6 +142,8 @@ def _worker_main() -> None:
     raw_request = sys.stdin.read()
     try:
         request = json.loads(raw_request)
+        timeout_seconds = _parse_worker_timeout(request.get("timeout_seconds"))
+        _start_worker_watchdog(timeout_seconds)
         result = _run_worker_request(request)
         payload = {"ok": True, "result": result}
     except SimulationRequestError as exc:
@@ -245,7 +249,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         for path, target in observed_targets.items():
             _validate_signal_target(dut, path, target)
 
-        resolved_events = _resolve_stimulus_events(dut, stimulus)
+        resolved_events = _resolve_stimulus_events(dut, stimulus, primary_domain)
 
         sim = Simulator(dut)
         for domain, period in clocks.items():
@@ -307,6 +311,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
 def _resolve_stimulus_events(
     dut: Any,
     stimulus: list[Mapping[str, Any]],
+    primary_domain: str,
 ) -> dict[int, tuple[ResolvedStimulusEvent, ...]]:
     events_by_cycle: dict[int, list[ResolvedStimulusEvent]] = defaultdict(list)
     for index, raw_event in enumerate(stimulus):
@@ -337,11 +342,17 @@ def _resolve_stimulus_events(
             raise SimulationRequestError(
                 f"Stimulus event at cycle {cycle} has invalid domain {domain!r}; domain must be a string if provided."
             )
+        normalized_domain = primary_domain if domain is None else domain
+        if normalized_domain != primary_domain:
+            raise SimulationRequestError(
+                f"Stimulus event at cycle {cycle} targets domain '{normalized_domain}', "
+                f"but only the primary domain '{primary_domain}' is currently supported for stimulus timing."
+            )
 
         events_by_cycle[cycle].append(
             ResolvedStimulusEvent(
                 cycle=cycle,
-                domain=domain,
+                domain=normalized_domain,
                 assignments=tuple(assignments),
             )
         )
@@ -380,7 +391,7 @@ def _resolve_signal_path(dut: Any, signal_path: str) -> Any:
         try:
             current = getattr(current, part)
         except AttributeError as exc:
-            raise SimulationRequestError(_missing_signal_message(signal_path, dut)) from exc
+            raise SimulationRequestError(_missing_signal_message(signal_path, current)) from exc
     return current
 
 
@@ -388,19 +399,19 @@ def _validate_signal_target(dut: Any, signal_path: str, target: Any) -> None:
     if not isinstance(target, (Value, ValueCastable)):
         raise SimulationRequestError(
             f"Signal path '{signal_path}' resolved to an unsupported object of type "
-            f"{type(target).__name__}. Top-level DUT attributes: {_format_top_level_attributes(dut)}."
+            f"{type(target).__name__}. Available attributes: {_format_available_attributes(dut)}."
         )
 
 
-def _missing_signal_message(signal_path: str, dut: Any) -> str:
+def _missing_signal_message(signal_path: str, obj: Any) -> str:
     return (
         f"Signal path '{signal_path}' could not be resolved. "
-        f"Top-level DUT attributes: {_format_top_level_attributes(dut)}."
+        f"Available attributes: {_format_available_attributes(obj)}."
     )
 
 
-def _format_top_level_attributes(dut: Any) -> str:
-    signal_names, other_names = _public_attribute_names(dut)
+def _format_available_attributes(obj: Any) -> str:
+    signal_names, other_names = _public_attribute_names(obj)
     names = signal_names + other_names
     return ", ".join(names) if names else "none"
 
@@ -531,6 +542,31 @@ def _format_seconds(timeout_seconds: float) -> str:
     if float(timeout_seconds).is_integer():
         return f"{int(timeout_seconds)}s"
     return f"{timeout_seconds:.3f}".rstrip("0").rstrip(".") + "s"
+
+
+def _parse_worker_timeout(raw_timeout: Any) -> float:
+    try:
+        timeout_seconds = float(raw_timeout)
+    except (TypeError, ValueError):
+        return WORKER_TIMEOUT_SECONDS
+    if timeout_seconds < 0:
+        return WORKER_TIMEOUT_SECONDS
+    return timeout_seconds
+
+
+def _start_worker_watchdog(timeout_seconds: float) -> None:
+    watchdog = threading.Thread(
+        target=_worker_watchdog_main,
+        args=(timeout_seconds,),
+        daemon=True,
+        name="amaranth-sim-mcp-watchdog",
+    )
+    watchdog.start()
+
+
+def _worker_watchdog_main(timeout_seconds: float) -> None:
+    time.sleep(max(timeout_seconds, 0.0) + 5.0)
+    os._exit(1)
 
 
 @contextlib.contextmanager

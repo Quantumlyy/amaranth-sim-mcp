@@ -105,6 +105,8 @@ def _keep_top_level_statement(node: ast.stmt) -> bool:
     if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
         return True
     if isinstance(node, ast.Assign):
+        # Known limitation: assignments like WIDTH = calc() are stripped because
+        # top-level calls are treated as side effects in definitions mode.
         return not _contains_runtime_effect(node.value)
     if isinstance(node, ast.AnnAssign):
         return node.value is None or not _contains_runtime_effect(node.value)
