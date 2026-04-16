@@ -14,7 +14,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
   "amaranth>=0.5",
-  "mcp",
+  "mcp>=1.27,<2",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -68,6 +69,8 @@ def run_simulation_request(
 
     if not path.is_file():
         raise SimulationRequestError(f"File not found: {path}")
+    if path.suffix != ".py":
+        raise SimulationRequestError(f"File must be a .py file: {path}")
     if mode not in {"script", "definitions"}:
         raise SimulationRequestError("mode must be either 'script' or 'definitions'.")
     if cycles < 0:
@@ -88,24 +91,35 @@ def run_simulation_request(
     request["progress_path"] = str(progress_path)
 
     try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "amaranth_sim_mcp.runner", "--worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(path.parent),
+        )
         try:
-            completed = subprocess.run(
-                [sys.executable, "-m", "amaranth_sim_mcp.runner", "--worker"],
-                input=json.dumps(request),
-                capture_output=True,
-                text=True,
-                cwd=str(path.parent),
+            stdout, stderr = proc.communicate(
+                json.dumps(request),
                 timeout=timeout_seconds,
-                check=False,
             )
         except subprocess.TimeoutExpired as exc:
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                proc.communicate(timeout=1)
             last_cycle = _read_progress(progress_path)
             raise SimulationRequestError(_format_timeout_message(timeout_seconds, last_cycle)) from exc
 
-        payload = _parse_worker_response(completed.stdout, completed.stderr, completed.returncode)
+        payload = _parse_worker_response(stdout or "", stderr or "", proc.returncode)
         if not payload["ok"]:
             error = payload.get("error", {})
-            raise SimulationRequestError(error.get("message", "Simulation failed."))
+            message = error.get("message", "Simulation failed.")
+            traceback_text = error.get("traceback")
+            if traceback_text:
+                message = f"{message}\n\nTraceback:\n{traceback_text.rstrip()}"
+            raise SimulationRequestError(message)
         return payload["result"]
     finally:
         progress_path.unlink(missing_ok=True)
@@ -135,6 +149,7 @@ def _worker_main() -> None:
             "ok": False,
             "error": {
                 "message": f"Unhandled simulation error: {type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
             },
         }
 
@@ -235,6 +250,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         sim = Simulator(dut)
         for domain, period in clocks.items():
             sim.add_clock(period, domain=domain)
+        vcd_path = str(Path(tempfile.gettempdir()) / f"amaranth_sim_{os.urandom(4).hex()}.vcd")
 
         trace: list[dict[str, Any]] = []
 
@@ -270,7 +286,8 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
                 _write_progress(progress_path, cycle)
 
         sim.add_testbench(testbench)
-        sim.run()
+        with sim.write_vcd(vcd_path):
+            sim.run()
 
     duration = time.perf_counter() - started_at
     return {
@@ -282,6 +299,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         "cycles": cycles,
         "observe": observe_paths,
         "trace": trace,
+        "vcd_path": vcd_path,
         "duration_seconds": duration,
     }
 

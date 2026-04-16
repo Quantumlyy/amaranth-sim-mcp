@@ -6,11 +6,12 @@ import importlib.metadata
 import platform
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import amaranth
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from . import __version__
 from .runner import SimulationRequestError, run_simulation_request
@@ -20,14 +21,38 @@ mcp = FastMCP("amaranth-sim-mcp")
 
 @mcp.tool()
 def simulate(
-    file_path: str,
-    mode: str,
-    class_name: str | None = None,
-    init_kwargs: dict[str, Any] | None = None,
-    clocks: dict[str, float] | None = None,
-    observe: list[str] | None = None,
-    stimulus: list[dict[str, Any]] | None = None,
-    cycles: int = 100,
+    file_path: Annotated[
+        str,
+        Field(description="Absolute or relative path to the .py file containing the design"),
+    ],
+    mode: Annotated[
+        str,
+        Field(description="Either 'script' (run file as-is) or 'definitions' (load class and build testbench)"),
+    ],
+    class_name: Annotated[
+        str | None,
+        Field(description="For 'definitions' mode: the Elaboratable class name to instantiate"),
+    ] = None,
+    init_kwargs: Annotated[
+        dict[str, Any] | None,
+        Field(description="For 'definitions' mode: kwargs passed to class constructor"),
+    ] = None,
+    clocks: Annotated[
+        dict[str, float] | None,
+        Field(description="For 'definitions' mode: domain name -> period mapping"),
+    ] = None,
+    observe: Annotated[
+        list[str] | None,
+        Field(description="For 'definitions' mode: signal paths to record (dotted for nested, e.g., 'alu.result')"),
+    ] = None,
+    stimulus: Annotated[
+        list[dict[str, Any]] | None,
+        Field(description="For 'definitions' mode: list of {'cycle': N, 'set': {'sig': val}} events"),
+    ] = None,
+    cycles: Annotated[
+        int,
+        Field(description="For 'definitions' mode: number of cycles to simulate"),
+    ] = 100,
 ) -> dict[str, Any]:
     """
     Run an Amaranth simulation in either `script` or `definitions` mode.
