@@ -101,4 +101,7 @@ Stimulus events use this shape:
 }
 ```
 
+In v1, `domain` must be omitted or match the selected primary clock domain.
+Multi-domain stimulus timing is not synchronized yet.
+
 For `definitions` mode, recorded samples use post-tick semantics: events for cycle `N` are applied before that cycle's tick, and observations for cycle `N` are captured after the tick.

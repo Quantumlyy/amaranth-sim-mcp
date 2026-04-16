@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import textwrap
 from pathlib import Path
 
@@ -42,6 +43,28 @@ class Counter(Elaboratable):
         m.domains.sync = ClockDomain()
         with m.If(self.en):
             m.d.sync += self.count.eq(self.count + 1)
+        return m
+"""
+
+
+NESTED_COUNTER_SOURCE = """\
+from amaranth import Elaboratable, ClockDomain, Module, Signal
+
+
+class Alu:
+    def __init__(self):
+        self.result = Signal(8)
+        self.valid = Signal()
+
+
+class Wrapper(Elaboratable):
+    def __init__(self):
+        self.en = Signal()
+        self.alu = Alu()
+
+    def elaborate(self, platform):
+        m = Module()
+        m.domains.sync = ClockDomain()
         return m
 """
 
@@ -107,6 +130,22 @@ def test_run_simulation_request_rejects_non_python_files(tmp_path):
     assert str(exc_info.value) == f"File must be a .py file: {design_path.resolve()}"
 
 
+def test_run_simulation_request_rejects_non_primary_stimulus_domain(tmp_path):
+    design_path = tmp_path / "counter.py"
+    design_path.write_text(textwrap.dedent(COUNTER_SOURCE), encoding="utf-8")
+
+    with pytest.raises(SimulationRequestError) as exc_info:
+        run_simulation_request(
+            design_path,
+            "definitions",
+            stimulus=[{"cycle": 0, "domain": "usb", "set": {"en": 1}}],
+        )
+
+    message = str(exc_info.value)
+    assert "targets domain 'usb'" in message
+    assert "primary domain 'sync'" in message
+
+
 def test_run_simulation_request_reports_missing_observe_signal_paths(tmp_path):
     design_path = tmp_path / "counter.py"
     design_path.write_text(textwrap.dedent(COUNTER_SOURCE), encoding="utf-8")
@@ -122,6 +161,26 @@ def test_run_simulation_request_reports_missing_observe_signal_paths(tmp_path):
     assert "Signal path 'missing' could not be resolved." in message
     assert "en" in message
     assert "count" in message
+
+
+def test_run_simulation_request_reports_nested_available_attributes(tmp_path):
+    design_path = tmp_path / "nested.py"
+    design_path.write_text(textwrap.dedent(NESTED_COUNTER_SOURCE), encoding="utf-8")
+
+    with pytest.raises(SimulationRequestError) as exc_info:
+        run_simulation_request(
+            design_path,
+            "definitions",
+            class_name="Wrapper",
+            observe=["alu.bad_sig"],
+        )
+
+    message = str(exc_info.value)
+    assert "Signal path 'alu.bad_sig' could not be resolved." in message
+    assert "Available attributes:" in message
+    assert "result" in message
+    assert "valid" in message
+    assert "en" not in message
 
 
 def test_run_simulation_request_reports_missing_stimulus_signal_paths(tmp_path):
@@ -141,22 +200,47 @@ def test_run_simulation_request_reports_missing_stimulus_signal_paths(tmp_path):
     assert "count" in message
 
 
-def test_run_simulation_request_timeout_reports_last_completed_cycle(tmp_path):
+def test_run_simulation_request_timeout_reports_last_completed_cycle(monkeypatch, tmp_path):
     design_path = tmp_path / "counter.py"
     design_path.write_text(textwrap.dedent(FAST_COUNTER_SOURCE), encoding="utf-8")
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.killed = False
+            self.communicated = []
+
+        def communicate(self, input=None, timeout=None):
+            self.communicated.append((input, timeout))
+            if self.killed:
+                return ("", "")
+            raise runner.subprocess.TimeoutExpired(cmd="worker", timeout=timeout)
+
+        def kill(self):
+            self.killed = True
+
+    fake_process = FakeProcess()
+
+    def fake_popen(*args, **kwargs):
+        assert kwargs["cwd"] == str(tmp_path.resolve())
+        return fake_process
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(runner, "_read_progress", lambda _: 123)
 
     with pytest.raises(SimulationRequestError) as exc_info:
         run_simulation_request(
             design_path,
             "definitions",
-            observe=["count"],
-            cycles=10_000_000,
             timeout_seconds=1.0,
         )
 
     message = str(exc_info.value)
     assert "Simulation timed out after 1s." in message
-    assert "Last completed cycle:" in message
+    assert "Last completed cycle: 123." in message
+    request_payload = json.loads(fake_process.communicated[0][0])
+    assert request_payload["timeout_seconds"] == 1.0
+    assert fake_process.killed is True
 
 
 def test_worker_reports_tracebacks_for_unhandled_exceptions(monkeypatch, capsys):
@@ -173,3 +257,47 @@ def test_worker_reports_tracebacks_for_unhandled_exceptions(monkeypatch, capsys)
     assert '"ok": false' in output
     assert "Unhandled simulation error: RuntimeError: boom" in output
     assert "Traceback" in output
+
+
+def test_worker_main_starts_watchdog_from_request_timeout(monkeypatch, capsys):
+    monkeypatch.setattr(
+        runner.sys,
+        "stdin",
+        io.StringIO(json.dumps({"mode": "script", "timeout_seconds": 2.5})),
+    )
+    observed = {}
+
+    def fake_watchdog(timeout_seconds):
+        observed["timeout_seconds"] = timeout_seconds
+
+    def fake_run_worker_request(request):
+        return {"mode": request["mode"]}
+
+    monkeypatch.setattr(runner, "_start_worker_watchdog", fake_watchdog)
+    monkeypatch.setattr(runner, "_run_worker_request", fake_run_worker_request)
+
+    runner._worker_main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert observed["timeout_seconds"] == 2.5
+    assert output["ok"] is True
+    assert output["result"] == {"mode": "script"}
+
+
+def test_worker_watchdog_main_exits_after_timeout(monkeypatch):
+    observed = {}
+
+    def fake_sleep(seconds):
+        observed["sleep"] = seconds
+
+    def fake_exit(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(runner.time, "sleep", fake_sleep)
+    monkeypatch.setattr(runner.os, "_exit", fake_exit)
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner._worker_watchdog_main(1.0)
+
+    assert exc_info.value.code == 1
+    assert observed["sleep"] == 6.0

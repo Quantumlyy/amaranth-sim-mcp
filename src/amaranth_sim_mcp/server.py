@@ -72,6 +72,9 @@ def simulate(
 
     Stimulus events use this format:
     `{"cycle": 3, "domain": "sync", "set": {"en": 1, "alu.op": 2}}`
+
+    In v1, `stimulus.domain` must be omitted or match the resolved primary
+    clock domain; multi-domain stimulus timing is not synchronized yet.
     """
 
     try:
