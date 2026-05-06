@@ -159,26 +159,36 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _worker_main() -> None:
-    raw_request = sys.stdin.read()
+    # The parent uses our stdout for the JSON response payload, so any
+    # incidental writes (logging the user configured to sys.stdout, prints
+    # from elaborate(), etc.) must not reach it. Reserve the real stdout
+    # and point sys.stdout at sys.stderr while the request runs; restore
+    # it for the final write.
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
     try:
-        request = json.loads(raw_request)
-        timeout_seconds = _parse_worker_timeout(request.get("timeout_seconds"))
-        _start_worker_watchdog(timeout_seconds)
-        result = _run_worker_request(request)
-        payload = {"ok": True, "result": result}
-    except SimulationRequestError as exc:
-        payload = {"ok": False, "error": {"message": str(exc)}}
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        payload = {
-            "ok": False,
-            "error": {
-                "message": f"Unhandled simulation error: {type(exc).__name__}: {exc}",
-                "traceback": traceback.format_exc(),
-            },
-        }
+        raw_request = sys.stdin.read()
+        try:
+            request = json.loads(raw_request)
+            timeout_seconds = _parse_worker_timeout(request.get("timeout_seconds"))
+            _start_worker_watchdog(timeout_seconds)
+            result = _run_worker_request(request)
+            payload = {"ok": True, "result": result}
+        except SimulationRequestError as exc:
+            payload = {"ok": False, "error": {"message": str(exc)}}
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            payload = {
+                "ok": False,
+                "error": {
+                    "message": f"Unhandled simulation error: {type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc(),
+                },
+            }
+    finally:
+        sys.stdout = real_stdout
 
-    sys.stdout.write(json.dumps(payload))
-    sys.stdout.flush()
+    real_stdout.write(json.dumps(payload))
+    real_stdout.flush()
 
 
 def _run_worker_request(request: Mapping[str, Any]) -> dict[str, Any]:

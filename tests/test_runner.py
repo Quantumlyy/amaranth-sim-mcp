@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -321,6 +322,31 @@ def test_worker_main_starts_watchdog_from_request_timeout(monkeypatch, capsys):
     assert observed["timeout_seconds"] == 2.5
     assert output["ok"] is True
     assert output["result"] == {"mode": "script"}
+
+
+def test_worker_main_isolates_incidental_stdout_writes(monkeypatch, capsys):
+    """A worker stdout write must not leak into the JSON payload channel."""
+    monkeypatch.setattr(
+        runner.sys,
+        "stdin",
+        io.StringIO(json.dumps({"mode": "definitions"})),
+    )
+    monkeypatch.setattr(runner, "_start_worker_watchdog", lambda _: None)
+
+    def fake_run_worker_request(request):
+        # Simulates user code (or logging configured to sys.stdout)
+        # writing to stdout from inside the worker.
+        sys.stdout.write("noisy log line\n")
+        return {"mode": request["mode"]}
+
+    monkeypatch.setattr(runner, "_run_worker_request", fake_run_worker_request)
+
+    runner._worker_main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload == {"ok": True, "result": {"mode": "definitions"}}
+    assert "noisy log line" in captured.err
 
 
 def test_worker_watchdog_main_exits_after_timeout(monkeypatch):
