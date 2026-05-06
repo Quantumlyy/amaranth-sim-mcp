@@ -64,8 +64,15 @@ def run_simulation_request(
     cycles: int = DEFAULT_CYCLES,
     *,
     timeout_seconds: float = WORKER_TIMEOUT_SECONDS,
+    vcd_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    """Run a simulation request in an isolated worker subprocess."""
+    """Run a simulation request in an isolated worker subprocess.
+
+    `vcd_dir` controls where definitions-mode VCDs are written. If `None`,
+    the system temp dir is used (paths are leaked to the caller's
+    responsibility); pass a server-owned directory if you want lifetime
+    bounded by the calling process.
+    """
 
     path = (Path.cwd() / Path(file_path).expanduser()).resolve()
 
@@ -96,6 +103,7 @@ def run_simulation_request(
         "stimulus": list(stimulus or []),
         "cycles": cycles,
         "timeout_seconds": timeout_seconds,
+        "vcd_dir": str(vcd_dir) if vcd_dir is not None else None,
     }
 
     progress_path = _create_progress_file()
@@ -275,7 +283,10 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         for domain, period in clocks.items():
             sim.add_clock(period, domain=domain)
         vcd_suffix = os.urandom(VCD_RANDOM_SUFFIX_BYTES).hex()
-        vcd_path = str(Path(tempfile.gettempdir()) / f"amaranth_sim_{vcd_suffix}.vcd")
+        raw_vcd_dir = request.get("vcd_dir")
+        vcd_root = Path(str(raw_vcd_dir)) if raw_vcd_dir else Path(tempfile.gettempdir())
+        vcd_root.mkdir(parents=True, exist_ok=True)
+        vcd_path = str(vcd_root / f"amaranth_sim_{vcd_suffix}.vcd")
         logger.debug(
             "definitions mode: vcd=%s observed=%d signals", vcd_path, len(observed_targets)
         )

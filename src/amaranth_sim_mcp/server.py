@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import atexit
 import importlib.metadata
 import logging
 import platform
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -19,6 +22,9 @@ from .runner import DEFAULT_CYCLES, SimulationRequestError, run_simulation_reque
 
 logger = logging.getLogger("amaranth_sim_mcp")
 mcp = FastMCP("amaranth-sim-mcp")
+
+_VCD_DIR = Path(tempfile.mkdtemp(prefix="amaranth-sim-mcp-vcd-"))
+atexit.register(shutil.rmtree, _VCD_DIR, ignore_errors=True)
 
 
 @mcp.tool()
@@ -93,6 +99,10 @@ def simulate(
 
     In v1, `stimulus.domain` must be omitted or match the resolved primary
     clock domain; multi-domain stimulus timing is not synchronized yet.
+
+    VCD files for `definitions` mode are written under a per-server
+    temporary directory and removed when the server process exits, so
+    inspect or copy them before shutting the server down.
     """
 
     try:
@@ -105,6 +115,7 @@ def simulate(
             observe=observe,
             stimulus=stimulus,
             cycles=cycles,
+            vcd_dir=_VCD_DIR,
         )
     except SimulationRequestError as exc:
         raise ToolError(str(exc)) from exc

@@ -72,3 +72,4 @@ async def test_simulate_definitions_mode_returns_trace_and_vcd(
     assert structured["primary_domain"] == "sync"
     assert [sample["signals"]["count"] for sample in structured["trace"]] == [1, 2, 3]
     assert Path(structured["vcd_path"]).is_file()
+    assert "amaranth-sim-mcp-vcd-" in structured["vcd_path"]
