@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
+
+from amaranth_sim_mcp.server import mcp
 from tests._designs import (
     COUNTER_SOURCE,
     FAST_COUNTER_SOURCE,
@@ -15,9 +18,6 @@ from tests._designs import (
     PACKAGE_IMPORT_SOURCE,
     TOP_LEVEL_IMPORT_SOURCE,
 )
-from mcp.shared.memory import create_connected_server_and_client_session
-
-from amaranth_sim_mcp.server import mcp
 
 
 @pytest.fixture
