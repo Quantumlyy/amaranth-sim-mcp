@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _designs import (
+from tests._designs import (
     COUNTER_SOURCE,
     FAST_COUNTER_SOURCE,
     LAZY_IMPORT_SOURCE,
