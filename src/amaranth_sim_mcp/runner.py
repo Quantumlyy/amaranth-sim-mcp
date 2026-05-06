@@ -24,6 +24,7 @@ from amaranth.hdl import Value, ValueCastable
 from amaranth.hdl._ir import Fragment
 from amaranth.sim import Simulator
 
+from ._paths import temporary_sys_path
 from .errors import SimulationRequestError
 from .loader import load_definitions_module, select_elaboratable_class
 
@@ -176,7 +177,7 @@ def _run_script_mode(request: Mapping[str, Any]) -> dict[str, Any]:
     try:
         with (
             _temporary_cwd(cwd),
-            _temporary_sys_path([str(cwd)]),
+            temporary_sys_path([str(cwd)]),
             _temporary_argv([str(file_path)]),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -230,7 +231,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
             f"Failed to load '{file_path}': {type(exc).__name__}: {exc}"
         ) from exc
 
-    with _temporary_cwd(file_path.parent), _temporary_sys_path(loader_path_entries):
+    with _temporary_cwd(file_path.parent), temporary_sys_path(loader_path_entries):
         try:
             dut_class = select_elaboratable_class(module, class_name)
         except ValueError as exc:
@@ -584,16 +585,6 @@ def _temporary_cwd(path: Path) -> Iterator[None]:
         yield
     finally:
         os.chdir(previous)
-
-
-@contextlib.contextmanager
-def _temporary_sys_path(entries: list[str]) -> Iterator[None]:
-    original = list(sys.path)
-    sys.path[:0] = entries
-    try:
-        yield
-    finally:
-        sys.path[:] = original
 
 
 @contextlib.contextmanager

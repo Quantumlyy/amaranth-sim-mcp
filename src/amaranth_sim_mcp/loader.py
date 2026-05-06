@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import ast
-import contextlib
 import hashlib
 import importlib.util
 import inspect
 import sys
 import types
-from collections.abc import Iterator
 from pathlib import Path
 
 from amaranth.hdl import Elaboratable
 
+from ._paths import temporary_sys_path
 from .errors import SimulationRequestError
 
 
@@ -50,7 +49,7 @@ def load_definitions_module(
     previous_module = sys.modules.get(module_name)
     sys.modules[module_name] = module
     try:
-        with _temporary_sys_path(extra_paths):
+        with temporary_sys_path(extra_paths):
             exec(code, module.__dict__)
     except ImportError as exc:
         if previous_module is None:
@@ -197,13 +196,3 @@ def _format_import_error(path: Path, exc: ImportError, extra_paths: list[str]) -
         f"import target into the project root, or install it into the Python "
         f"environment used to run the server."
     )
-
-
-@contextlib.contextmanager
-def _temporary_sys_path(entries: list[str]) -> Iterator[None]:
-    original = list(sys.path)
-    sys.path[:0] = entries
-    try:
-        yield
-    finally:
-        sys.path[:] = original
