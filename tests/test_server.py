@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import textwrap
 
 from mcp.shared.memory import create_connected_server_and_client_session
 
@@ -9,20 +8,17 @@ from amaranth_sim_mcp import __version__
 from amaranth_sim_mcp.server import mcp
 
 
-def test_server_tools_are_exposed_and_callable(tmp_path):
-    script_path = tmp_path / "script_sim.py"
-    script_path.write_text(
-        textwrap.dedent(
-            """\
-            import sys
-            from pathlib import Path
+def test_server_tools_are_exposed_and_callable(tmp_path, write_design):
+    script_path = write_design(
+        "script_sim.py",
+        """\
+        import sys
+        from pathlib import Path
 
-            print("hello from tool")
-            print("tool stderr", file=sys.stderr)
-            Path("tool-wave.vcd").write_text("$date now $end", encoding="utf-8")
-            """
-        ),
-        encoding="utf-8",
+        print("hello from tool")
+        print("tool stderr", file=sys.stderr)
+        Path("tool-wave.vcd").write_text("$date now $end", encoding="utf-8")
+        """,
     )
 
     async def run_test() -> None:
