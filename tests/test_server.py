@@ -26,7 +26,9 @@ def test_server_tools_are_exposed_and_callable(tmp_path):
     )
 
     async def run_test() -> None:
-        async with create_connected_server_and_client_session(mcp, raise_exceptions=True) as session:
+        async with create_connected_server_and_client_session(
+            mcp, raise_exceptions=True
+        ) as session:
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {"simulate", "check_environment"}
 

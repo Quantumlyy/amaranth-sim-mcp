@@ -9,8 +9,8 @@ import importlib.util
 import inspect
 import sys
 import types
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from amaranth.hdl import Elaboratable
 
@@ -106,9 +106,7 @@ def select_elaboratable_class(
         return next(iter(classes.values()))
 
     if not classes:
-        raise ValueError(
-            "No Elaboratable subclasses were found in the module."
-        )
+        raise ValueError("No Elaboratable subclasses were found in the module.")
 
     raise ValueError(
         "Multiple Elaboratable subclasses were found; pass class_name explicitly. "
@@ -117,7 +115,10 @@ def select_elaboratable_class(
 
 
 def _keep_top_level_statement(node: ast.stmt) -> bool:
-    if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+    if isinstance(
+        node,
+        (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
         return True
     if isinstance(node, ast.Assign):
         # Known limitation: assignments like WIDTH = calc() are stripped because

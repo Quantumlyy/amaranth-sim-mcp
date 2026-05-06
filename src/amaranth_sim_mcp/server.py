@@ -27,7 +27,11 @@ def simulate(
     ],
     mode: Annotated[
         str,
-        Field(description="Either 'script' (run file as-is) or 'definitions' (load class and build testbench)"),
+        Field(
+            description=(
+                "Either 'script' (run file as-is) or 'definitions' (load class and build testbench)"
+            ),
+        ),
     ],
     class_name: Annotated[
         str | None,
@@ -43,11 +47,20 @@ def simulate(
     ] = None,
     observe: Annotated[
         list[str] | None,
-        Field(description="For 'definitions' mode: signal paths to record (dotted for nested, e.g., 'alu.result')"),
+        Field(
+            description=(
+                "For 'definitions' mode: signal paths to record "
+                "(dotted for nested, e.g., 'alu.result')"
+            ),
+        ),
     ] = None,
     stimulus: Annotated[
         list[dict[str, Any]] | None,
-        Field(description="For 'definitions' mode: list of {'cycle': N, 'set': {'sig': val}} events"),
+        Field(
+            description=(
+                "For 'definitions' mode: list of {'cycle': N, 'set': {'sig': val}} events"
+            ),
+        ),
     ] = None,
     cycles: Annotated[
         int,

@@ -10,7 +10,6 @@ import pytest
 from amaranth_sim_mcp import runner
 from amaranth_sim_mcp.runner import SimulationRequestError, run_simulation_request
 
-
 COUNTER_SOURCE = """\
 from amaranth import Elaboratable, ClockDomain, Module, Signal
 

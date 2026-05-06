@@ -51,7 +51,7 @@ def test_load_definitions_module_strips_top_level_side_effects(tmp_path):
 
 def test_load_definitions_module_supports_same_directory_imports(tmp_path):
     helper_path = tmp_path / "helper.py"
-    helper_path.write_text('OFFSET = 3\n', encoding="utf-8")
+    helper_path.write_text("OFFSET = 3\n", encoding="utf-8")
 
     module_path = tmp_path / "design.py"
     module_path.write_text(

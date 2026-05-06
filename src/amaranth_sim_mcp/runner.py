@@ -15,10 +15,10 @@ import threading
 import time
 import traceback
 from collections import defaultdict
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from amaranth.hdl import Value, ValueCastable
 from amaranth.hdl._ir import Fragment
@@ -52,18 +52,14 @@ def run_simulation_request(
     init_kwargs: Mapping[str, Any] | None = None,
     clocks: Mapping[str, float] | None = None,
     observe: list[str] | None = None,
-    stimulus: list[Mapping[str, Any]] | None = None,
+    stimulus: Sequence[Mapping[str, Any]] | None = None,
     cycles: int = 100,
     *,
     timeout_seconds: float = WORKER_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Run a simulation request in an isolated worker subprocess."""
 
-    path = Path(file_path).expanduser()
-    if not path.is_absolute():
-        path = (Path.cwd() / path).resolve()
-    else:
-        path = path.resolve()
+    path = (Path.cwd() / Path(file_path).expanduser()).resolve()
 
     if not path.is_file():
         raise SimulationRequestError(f"File not found: {path}")
@@ -109,7 +105,9 @@ def run_simulation_request(
             with contextlib.suppress(Exception):
                 proc.communicate(timeout=1)
             last_cycle = _read_progress(progress_path)
-            raise SimulationRequestError(_format_timeout_message(timeout_seconds, last_cycle)) from exc
+            raise SimulationRequestError(
+                _format_timeout_message(timeout_seconds, last_cycle)
+            ) from exc
 
         payload = _parse_worker_response(stdout or "", stderr or "", proc.returncode)
         if not payload["ok"]:
@@ -119,7 +117,7 @@ def run_simulation_request(
             if traceback_text:
                 message = f"{message}\n\nTraceback:\n{traceback_text.rstrip()}"
             raise SimulationRequestError(message)
-        return payload["result"]
+        return cast(dict[str, Any], payload["result"])
     finally:
         progress_path.unlink(missing_ok=True)
 
@@ -250,10 +248,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         primary_domain = "sync" if "sync" in clocks else next(iter(clocks))
 
         observe_paths = list(observe) if observe is not None else _default_observe_paths(dut)
-        observed_targets = {
-            path: _resolve_signal_path(dut, path)
-            for path in observe_paths
-        }
+        observed_targets = {path: _resolve_signal_path(dut, path) for path in observe_paths}
         for path, target in observed_targets.items():
             _validate_signal_target(dut, path, target)
 
@@ -274,7 +269,8 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
                             ctx.set(assignment.target, assignment.value)
                         except Exception as exc:
                             raise SimulationRequestError(
-                                f"Failed to set signal '{assignment.path}': {type(exc).__name__}: {exc}"
+                                f"Failed to set signal '{assignment.path}': "
+                                f"{type(exc).__name__}: {exc}"
                             ) from exc
 
                 await ctx.tick(primary_domain)
@@ -326,7 +322,8 @@ def _resolve_stimulus_events(
         cycle = raw_event.get("cycle")
         if not isinstance(cycle, int) or cycle < 0:
             raise SimulationRequestError(
-                f"Stimulus event at index {index} has invalid cycle {cycle!r}; cycle must be a non-negative integer."
+                f"Stimulus event at index {index} has invalid cycle {cycle!r}; "
+                "cycle must be a non-negative integer."
             )
 
         assignments: list[ResolvedAssignment] = []
@@ -348,13 +345,15 @@ def _resolve_stimulus_events(
         domain = raw_event.get("domain")
         if domain is not None and not isinstance(domain, str):
             raise SimulationRequestError(
-                f"Stimulus event at cycle {cycle} has invalid domain {domain!r}; domain must be a string if provided."
+                f"Stimulus event at cycle {cycle} has invalid domain {domain!r}; "
+                "domain must be a string if provided."
             )
         normalized_domain = primary_domain if domain is None else domain
         if normalized_domain != primary_domain:
             raise SimulationRequestError(
                 f"Stimulus event at cycle {cycle} targets domain '{normalized_domain}', "
-                f"but only the primary domain '{primary_domain}' is currently supported for stimulus timing."
+                f"but only the primary domain '{primary_domain}' is currently supported "
+                "for stimulus timing."
             )
 
         events_by_cycle[cycle].append(
@@ -609,8 +608,8 @@ def _temporary_argv(argv: list[str]) -> Iterator[None]:
 
 __all__ = [
     "DEFAULT_CLOCKS",
-    "SimulationRequestError",
     "WORKER_TIMEOUT_SECONDS",
+    "SimulationRequestError",
     "main",
     "run_simulation_request",
 ]
