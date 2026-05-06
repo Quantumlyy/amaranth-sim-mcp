@@ -115,7 +115,7 @@ def run_simulation_request(
             ) from exc
 
         payload = _parse_worker_response(stdout or "", stderr or "", proc.returncode)
-        if not payload["ok"]:
+        if not payload.get("ok", False):
             error = payload.get("error", {})
             message = error.get("message", "Simulation failed.")
             traceback_text = error.get("traceback")
@@ -512,13 +512,22 @@ def _parse_worker_response(stdout: str, stderr: str, returncode: int) -> dict[st
     if stdout.strip():
         try:
             payload = json.loads(stdout)
-            if isinstance(payload, dict):
-                return payload
         except json.JSONDecodeError:
-            pass
+            payload = None
+        if isinstance(payload, dict) and _is_well_formed_worker_response(payload):
+            return payload
 
     message = stderr.strip() or stdout.strip() or f"Worker exited with return code {returncode}."
     return {"ok": False, "error": {"message": message}}
+
+
+def _is_well_formed_worker_response(payload: Mapping[str, Any]) -> bool:
+    ok = payload.get("ok")
+    if not isinstance(ok, bool):
+        return False
+    if ok:
+        return isinstance(payload.get("result"), dict)
+    return isinstance(payload.get("error"), dict)
 
 
 def _create_progress_file() -> Path:
