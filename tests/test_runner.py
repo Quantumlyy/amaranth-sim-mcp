@@ -8,7 +8,6 @@ import pytest
 from conftest import (
     FAST_COUNTER_SOURCE,
     LAZY_IMPORT_SOURCE,
-    NESTED_COUNTER_SOURCE,
     PACKAGE_IMPORT_SOURCE,
     TOP_LEVEL_IMPORT_SOURCE,
 )
@@ -108,31 +107,61 @@ def test_run_simulation_request_rejects_non_python_files(tmp_path):
     assert str(exc_info.value) == f"File must be a .py file: {design_path.resolve()}"
 
 
-def test_run_simulation_request_rejects_non_primary_stimulus_domain(counter_design):
+@pytest.mark.parametrize(
+    ("design_fixture", "extra_kwargs", "expected_substrings", "forbidden_substrings"),
+    [
+        pytest.param(
+            "counter_design",
+            {"observe": ["missing"]},
+            ("Signal path 'missing' could not be resolved.", "en", "count"),
+            (),
+            id="missing-observe-signal",
+        ),
+        pytest.param(
+            "counter_design",
+            {"stimulus": [{"cycle": 0, "set": {"missing": 1}}]},
+            ("Signal path 'missing' could not be resolved.", "en", "count"),
+            (),
+            id="missing-stimulus-signal",
+        ),
+        pytest.param(
+            "counter_design",
+            {"stimulus": [{"cycle": 0, "domain": "usb", "set": {"en": 1}}]},
+            ("targets domain 'usb'", "primary domain 'sync'"),
+            (),
+            id="non-primary-stimulus-domain",
+        ),
+        pytest.param(
+            "nested_design",
+            {"class_name": "Wrapper", "observe": ["alu.bad_sig"]},
+            (
+                "Signal path 'alu.bad_sig' could not be resolved.",
+                "Available attributes:",
+                "result",
+                "valid",
+            ),
+            ("en",),
+            id="nested-observe-signal",
+        ),
+    ],
+)
+def test_definitions_mode_error_includes_context(
+    request,
+    design_fixture: str,
+    extra_kwargs: dict,
+    expected_substrings: tuple[str, ...],
+    forbidden_substrings: tuple[str, ...],
+):
+    design_path = request.getfixturevalue(design_fixture)
+
     with pytest.raises(SimulationRequestError) as exc_info:
-        run_simulation_request(
-            counter_design,
-            "definitions",
-            stimulus=[{"cycle": 0, "domain": "usb", "set": {"en": 1}}],
-        )
+        run_simulation_request(design_path, "definitions", **extra_kwargs)
 
     message = str(exc_info.value)
-    assert "targets domain 'usb'" in message
-    assert "primary domain 'sync'" in message
-
-
-def test_run_simulation_request_reports_missing_observe_signal_paths(counter_design):
-    with pytest.raises(SimulationRequestError) as exc_info:
-        run_simulation_request(
-            counter_design,
-            "definitions",
-            observe=["missing"],
-        )
-
-    message = str(exc_info.value)
-    assert "Signal path 'missing' could not be resolved." in message
-    assert "en" in message
-    assert "count" in message
+    for substring in expected_substrings:
+        assert substring in message, f"missing {substring!r} in {message!r}"
+    for substring in forbidden_substrings:
+        assert substring not in message, f"unexpected {substring!r} in {message!r}"
 
 
 def test_run_simulation_request_reports_structured_missing_import_errors(tmp_path, write_design):
@@ -180,25 +209,6 @@ def test_run_simulation_request_reports_structured_syntax_errors(write_design):
     assert "line 3" in message
 
 
-def test_run_simulation_request_reports_nested_available_attributes(write_design):
-    design_path = write_design("nested.py", NESTED_COUNTER_SOURCE)
-
-    with pytest.raises(SimulationRequestError) as exc_info:
-        run_simulation_request(
-            design_path,
-            "definitions",
-            class_name="Wrapper",
-            observe=["alu.bad_sig"],
-        )
-
-    message = str(exc_info.value)
-    assert "Signal path 'alu.bad_sig' could not be resolved." in message
-    assert "Available attributes:" in message
-    assert "result" in message
-    assert "valid" in message
-    assert "en" not in message
-
-
 def test_run_simulation_request_definitions_mode_supports_nested_package_layouts(
     write_design, cleanup_vcd
 ):
@@ -216,20 +226,6 @@ def test_run_simulation_request_definitions_mode_supports_nested_package_layouts
     cleanup_vcd(result["vcd_path"])
 
     assert [sample["signals"]["count"] for sample in result["trace"]] == [1, 2, 3]
-
-
-def test_run_simulation_request_reports_missing_stimulus_signal_paths(counter_design):
-    with pytest.raises(SimulationRequestError) as exc_info:
-        run_simulation_request(
-            counter_design,
-            "definitions",
-            stimulus=[{"cycle": 0, "set": {"missing": 1}}],
-        )
-
-    message = str(exc_info.value)
-    assert "Signal path 'missing' could not be resolved." in message
-    assert "en" in message
-    assert "count" in message
 
 
 def test_run_simulation_request_timeout_reports_last_completed_cycle(

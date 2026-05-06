@@ -139,6 +139,12 @@ def counter_design(write_design: Callable[[str, str], Path]) -> Path:
 
 
 @pytest.fixture
+def nested_design(write_design: Callable[[str, str], Path]) -> Path:
+    """A Wrapper Elaboratable with a nested non-Elaboratable Alu submodule."""
+    return write_design("nested.py", NESTED_COUNTER_SOURCE)
+
+
+@pytest.fixture
 def cleanup_vcd() -> Iterator[Callable[[str | Path], None]]:
     """Yield a callback that registers VCD paths for removal after the test."""
     tracked: list[Path] = []
