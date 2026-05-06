@@ -9,6 +9,7 @@ import platform
 import shutil
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -23,8 +24,24 @@ from .runner import DEFAULT_CYCLES, SimulationRequestError, run_simulation_reque
 logger = logging.getLogger("amaranth_sim_mcp")
 mcp = FastMCP("amaranth-sim-mcp")
 
-_VCD_DIR = Path(tempfile.mkdtemp(prefix="amaranth-sim-mcp-vcd-"))
-atexit.register(shutil.rmtree, _VCD_DIR, ignore_errors=True)
+_vcd_dir: Path | None = None
+_vcd_dir_lock = threading.Lock()
+
+
+def _get_or_create_vcd_dir() -> Path:
+    """Lazily create the per-server VCD directory and register cleanup.
+
+    Avoids a filesystem side effect at module import; the directory is
+    only created when a definitions-mode simulate call needs it. Cleanup
+    is registered with `atexit` the first time, so the directory is
+    removed when the server process exits regardless.
+    """
+    global _vcd_dir
+    with _vcd_dir_lock:
+        if _vcd_dir is None:
+            _vcd_dir = Path(tempfile.mkdtemp(prefix="amaranth-sim-mcp-vcd-"))
+            atexit.register(shutil.rmtree, _vcd_dir, ignore_errors=True)
+        return _vcd_dir
 
 
 @mcp.tool()
@@ -115,7 +132,7 @@ def simulate(
             observe=observe,
             stimulus=stimulus,
             cycles=cycles,
-            vcd_dir=_VCD_DIR,
+            vcd_dir=_get_or_create_vcd_dir() if mode == "definitions" else None,
         )
     except SimulationRequestError as exc:
         raise ToolError(str(exc)) from exc
