@@ -304,7 +304,12 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         vcd_suffix = os.urandom(VCD_RANDOM_SUFFIX_BYTES).hex()
         raw_vcd_dir = request.get("vcd_dir")
         vcd_root = Path(str(raw_vcd_dir)) if raw_vcd_dir else Path(tempfile.gettempdir())
-        vcd_root.mkdir(parents=True, exist_ok=True)
+        try:
+            vcd_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SimulationRequestError(
+                f"Failed to create VCD directory '{vcd_root}': {type(exc).__name__}: {exc}"
+            ) from exc
         vcd_path = str(vcd_root / f"amaranth_sim_{vcd_suffix}.vcd")
         logger.debug(
             "definitions mode: vcd=%s observed=%d signals", vcd_path, len(observed_targets)

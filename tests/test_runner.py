@@ -265,6 +265,25 @@ def test_run_simulation_request_expands_user_in_vcd_dir(
     assert vcd_path.parent == (home / "vcds").resolve()
 
 
+def test_run_simulation_request_reports_unwritable_vcd_dir(counter_design, tmp_path):
+    """A `vcd_dir` that can't be created surfaces as a structured error."""
+    not_a_dir = tmp_path / "blocker"
+    not_a_dir.write_text("", encoding="utf-8")
+
+    with pytest.raises(SimulationRequestError) as exc_info:
+        run_simulation_request(
+            counter_design,
+            "definitions",
+            cycles=1,
+            vcd_dir=str(not_a_dir),
+        )
+
+    message = str(exc_info.value)
+    assert "Failed to create VCD directory" in message
+    assert str(not_a_dir.resolve()) in message
+    assert "Unhandled simulation error" not in message
+
+
 def test_run_simulation_request_timeout_reports_last_completed_cycle(
     monkeypatch, tmp_path, fast_counter_design
 ):
