@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
-import pytest_asyncio
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from amaranth_sim_mcp.server import mcp
@@ -157,8 +158,21 @@ def cleanup_vcd() -> Iterator[Callable[[str | Path], None]]:
         path.unlink(missing_ok=True)
 
 
-@pytest_asyncio.fixture
-async def mcp_session() -> AsyncIterator[object]:
-    """Connected MCP client session bound to the local FastMCP server."""
-    async with create_connected_server_and_client_session(mcp, raise_exceptions=True) as session:
-        yield session
+@pytest.fixture
+def mcp_session() -> Callable[[], Any]:
+    """Async context-manager factory for an in-memory MCP client session.
+
+    Returned as a factory (rather than yielded directly) so that the
+    `async with` lives entirely inside the test's task, avoiding the
+    anyio cancel-scope cross-task error that pytest-asyncio fixtures hit
+    when wrapping `create_connected_server_and_client_session`.
+    """
+
+    @asynccontextmanager
+    async def _session() -> AsyncIterator[object]:
+        async with create_connected_server_and_client_session(
+            mcp, raise_exceptions=True
+        ) as session:
+            yield session
+
+    return _session
