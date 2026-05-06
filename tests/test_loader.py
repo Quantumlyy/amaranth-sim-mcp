@@ -92,6 +92,35 @@ def test_select_elaboratable_class_auto_selects_single_class(write_design):
     assert selected.__name__ == "Counter"
 
 
+def test_load_definitions_module_keeps_safe_assignments_and_async_defs(write_design):
+    module_path = write_design(
+        "design.py",
+        """\
+        WIDTH = 32
+        x: int
+        y: int = 7
+        z: int = int("3")
+
+        async def coro():
+            return 1
+
+        def helper():
+            return WIDTH
+        """,
+    )
+
+    module, _ = load_definitions_module(module_path)
+
+    assert module.WIDTH == 32
+    assert module.y == 7
+    assert module.helper() == 32
+    assert hasattr(module, "coro")
+    # `x: int` is a bare annotation: no value bound to the namespace.
+    assert not hasattr(module, "x")
+    # `z: int = int("3")` has a runtime call on the RHS and is stripped.
+    assert not hasattr(module, "z")
+
+
 def test_select_elaboratable_class_lists_available_classes_for_missing_name(write_design):
     module_path = write_design(
         "design.py",

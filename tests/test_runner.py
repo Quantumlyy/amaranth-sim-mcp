@@ -39,6 +39,16 @@ def test_run_simulation_request_script_mode_captures_output_and_vcd(tmp_path, wr
     assert result["vcd_paths"] == [str((tmp_path / "wave.vcd").resolve())]
 
 
+def test_run_simulation_request_definitions_mode_auto_observes_public_signals(
+    counter_design, cleanup_vcd
+):
+    result = run_simulation_request(counter_design, "definitions", cycles=2)
+    cleanup_vcd(result["vcd_path"])
+
+    assert sorted(result["observe"]) == ["count", "en"]
+    assert all(set(sample["signals"]) == {"count", "en"} for sample in result["trace"])
+
+
 def test_run_simulation_request_definitions_mode_returns_post_tick_trace(
     counter_design, cleanup_vcd
 ):
