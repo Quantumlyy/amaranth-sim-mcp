@@ -171,33 +171,33 @@ def _worker_main() -> None:
     # The parent uses our stdout for the JSON response payload, so any
     # incidental writes (logging the user configured to sys.stdout, prints
     # from elaborate(), etc.) must not reach it. Reserve the real stdout
-    # and point sys.stdout at sys.stderr while the request runs; restore
-    # it for the final write.
+    # and redirect sys.stdout to sys.stderr for the entire worker lifetime
+    # so that any thread still running after the payload is written cannot
+    # corrupt the IPC channel.
     real_stdout = sys.stdout
     sys.stdout = sys.stderr
+
+    raw_request = sys.stdin.read()
     try:
-        raw_request = sys.stdin.read()
-        try:
-            request = json.loads(raw_request)
-            timeout_seconds = _parse_worker_timeout(request.get("timeout_seconds"))
-            _start_worker_watchdog(timeout_seconds)
-            result = _run_worker_request(request)
-            payload = {"ok": True, "result": result}
-        except SimulationRequestError as exc:
-            payload = {"ok": False, "error": {"message": str(exc)}}
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            payload = {
-                "ok": False,
-                "error": {
-                    "message": f"Unhandled simulation error: {type(exc).__name__}: {exc}",
-                    "traceback": traceback.format_exc(),
-                },
-            }
-    finally:
-        sys.stdout = real_stdout
+        request = json.loads(raw_request)
+        timeout_seconds = _parse_worker_timeout(request.get("timeout_seconds"))
+        _start_worker_watchdog(timeout_seconds)
+        result = _run_worker_request(request)
+        payload = {"ok": True, "result": result}
+    except SimulationRequestError as exc:
+        payload = {"ok": False, "error": {"message": str(exc)}}
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        payload = {
+            "ok": False,
+            "error": {
+                "message": f"Unhandled simulation error: {type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            },
+        }
 
     real_stdout.write(json.dumps(payload))
     real_stdout.flush()
+    sys.exit(0)
 
 
 def _run_worker_request(request: Mapping[str, Any]) -> dict[str, Any]:

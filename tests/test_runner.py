@@ -336,7 +336,9 @@ def test_worker_reports_tracebacks_for_unhandled_exceptions(monkeypatch, capsys)
 
     monkeypatch.setattr(runner, "_run_worker_request", explode)
 
-    runner._worker_main()
+    with pytest.raises(SystemExit) as exc_info:
+        runner._worker_main()
+    assert exc_info.value.code == 0
 
     output = capsys.readouterr().out
     assert '"ok": false' in output
@@ -361,7 +363,9 @@ def test_worker_main_starts_watchdog_from_request_timeout(monkeypatch, capsys):
     monkeypatch.setattr(runner, "_start_worker_watchdog", fake_watchdog)
     monkeypatch.setattr(runner, "_run_worker_request", fake_run_worker_request)
 
-    runner._worker_main()
+    with pytest.raises(SystemExit) as exc_info:
+        runner._worker_main()
+    assert exc_info.value.code == 0
 
     output = json.loads(capsys.readouterr().out)
     assert observed["timeout_seconds"] == 2.5
@@ -386,7 +390,9 @@ def test_worker_main_isolates_incidental_stdout_writes(monkeypatch, capsys):
 
     monkeypatch.setattr(runner, "_run_worker_request", fake_run_worker_request)
 
-    runner._worker_main()
+    with pytest.raises(SystemExit) as exc_info:
+        runner._worker_main()
+    assert exc_info.value.code == 0
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
