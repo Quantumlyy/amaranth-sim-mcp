@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import io
 import json
+import logging
 import os
 import runpy
 import subprocess
@@ -34,6 +35,8 @@ DEFAULT_CYCLES = 100
 WORKER_TIMEOUT_SECONDS = 30.0
 WATCHDOG_GRACE_SECONDS = 5.0
 VCD_RANDOM_SUFFIX_BYTES = 4
+
+logger = logging.getLogger("amaranth_sim_mcp")
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,14 @@ def run_simulation_request(
     if cycles < 0:
         raise SimulationRequestError("cycles must be greater than or equal to 0.")
 
+    logger.info(
+        "starting simulation: file=%s mode=%s cycles=%d timeout=%.1fs",
+        path,
+        mode,
+        cycles,
+        timeout_seconds,
+    )
+
     request = {
         "file_path": str(path),
         "mode": mode,
@@ -105,6 +116,7 @@ def run_simulation_request(
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
+            logger.info("simulation timed out after %.1fs; killing worker", timeout_seconds)
             with contextlib.suppress(Exception):
                 proc.kill()
             with contextlib.suppress(Exception):
@@ -264,6 +276,9 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
             sim.add_clock(period, domain=domain)
         vcd_suffix = os.urandom(VCD_RANDOM_SUFFIX_BYTES).hex()
         vcd_path = str(Path(tempfile.gettempdir()) / f"amaranth_sim_{vcd_suffix}.vcd")
+        logger.debug(
+            "definitions mode: vcd=%s observed=%d signals", vcd_path, len(observed_targets)
+        )
 
         trace: list[dict[str, Any]] = []
 
@@ -588,6 +603,11 @@ def _start_worker_watchdog(timeout_seconds: float) -> None:
 
 def _worker_watchdog_main(timeout_seconds: float) -> None:
     time.sleep(max(timeout_seconds, 0.0) + WATCHDOG_GRACE_SECONDS)
+    logger.warning(
+        "watchdog firing after %.1fs (configured timeout %.1fs); calling os._exit(1)",
+        max(timeout_seconds, 0.0) + WATCHDOG_GRACE_SECONDS,
+        timeout_seconds,
+    )
     os._exit(1)
 
 

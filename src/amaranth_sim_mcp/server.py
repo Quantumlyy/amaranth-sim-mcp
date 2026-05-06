@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import logging
 import platform
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ from pydantic import Field
 from . import __version__
 from .runner import DEFAULT_CYCLES, SimulationRequestError, run_simulation_request
 
+logger = logging.getLogger("amaranth_sim_mcp")
 mcp = FastMCP("amaranth-sim-mcp")
 
 
@@ -124,4 +126,5 @@ def check_environment() -> dict[str, str]:
 
 
 def main() -> None:
+    logger.info("amaranth-sim-mcp starting (server_version=%s)", __version__)
     mcp.run()

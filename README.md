@@ -114,3 +114,19 @@ entire simulation run. Imports from higher up the directory tree or from
 sibling projects are not resolved automatically; install those dependencies in
 the server's Python environment or restructure the project so imports resolve
 from the file's directory or its package root.
+
+## Logging
+
+The server uses the standard `logging` module under the `amaranth_sim_mcp`
+logger name. As a library, it does not configure a handler — by default
+nothing is emitted. To enable debug output to stderr, configure logging
+before starting the server, for example:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+`INFO` covers per-request boundaries (start, timeout-kill, server start);
+`WARNING` is used when the worker watchdog forces an exit; `DEBUG` adds
+per-simulation detail like the VCD path and observed-signal count.
