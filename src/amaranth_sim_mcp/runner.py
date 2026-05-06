@@ -28,8 +28,12 @@ from ._paths import temporary_sys_path
 from .errors import SimulationRequestError
 from .loader import load_definitions_module, select_elaboratable_class
 
-DEFAULT_CLOCKS: dict[str, float] = {"sync": 1e-6}
+DEFAULT_SYNC_PERIOD_SECONDS = 1e-6
+DEFAULT_CLOCKS: dict[str, float] = {"sync": DEFAULT_SYNC_PERIOD_SECONDS}
+DEFAULT_CYCLES = 100
 WORKER_TIMEOUT_SECONDS = 30.0
+WATCHDOG_GRACE_SECONDS = 5.0
+VCD_RANDOM_SUFFIX_BYTES = 4
 
 
 @dataclass(frozen=True)
@@ -54,7 +58,7 @@ def run_simulation_request(
     clocks: Mapping[str, float] | None = None,
     observe: list[str] | None = None,
     stimulus: Sequence[Mapping[str, Any]] | None = None,
-    cycles: int = 100,
+    cycles: int = DEFAULT_CYCLES,
     *,
     timeout_seconds: float = WORKER_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
@@ -211,7 +215,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
     clocks = dict(DEFAULT_CLOCKS if raw_clocks is None else raw_clocks)
     observe = request.get("observe")
     stimulus = list(request.get("stimulus") or [])
-    cycles = int(request.get("cycles", 100))
+    cycles = int(request.get("cycles", DEFAULT_CYCLES))
     progress_path = Path(str(request["progress_path"]))
 
     if not clocks:
@@ -258,7 +262,8 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         sim = Simulator(dut)
         for domain, period in clocks.items():
             sim.add_clock(period, domain=domain)
-        vcd_path = str(Path(tempfile.gettempdir()) / f"amaranth_sim_{os.urandom(4).hex()}.vcd")
+        vcd_suffix = os.urandom(VCD_RANDOM_SUFFIX_BYTES).hex()
+        vcd_path = str(Path(tempfile.gettempdir()) / f"amaranth_sim_{vcd_suffix}.vcd")
 
         trace: list[dict[str, Any]] = []
 
@@ -573,7 +578,7 @@ def _start_worker_watchdog(timeout_seconds: float) -> None:
 
 
 def _worker_watchdog_main(timeout_seconds: float) -> None:
-    time.sleep(max(timeout_seconds, 0.0) + 5.0)
+    time.sleep(max(timeout_seconds, 0.0) + WATCHDOG_GRACE_SECONDS)
     os._exit(1)
 
 
@@ -599,6 +604,7 @@ def _temporary_argv(argv: list[str]) -> Iterator[None]:
 
 __all__ = [
     "DEFAULT_CLOCKS",
+    "DEFAULT_CYCLES",
     "WORKER_TIMEOUT_SECONDS",
     "SimulationRequestError",
     "main",

@@ -14,7 +14,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from . import __version__
-from .runner import SimulationRequestError, run_simulation_request
+from .runner import DEFAULT_CYCLES, SimulationRequestError, run_simulation_request
 
 mcp = FastMCP("amaranth-sim-mcp")
 
@@ -65,7 +65,7 @@ def simulate(
     cycles: Annotated[
         int,
         Field(description="For 'definitions' mode: number of cycles to simulate"),
-    ] = 100,
+    ] = DEFAULT_CYCLES,
 ) -> dict[str, Any]:
     """
     Run an Amaranth simulation in either `script` or `definitions` mode.
