@@ -6,12 +6,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import (
-    FAST_COUNTER_SOURCE,
-    LAZY_IMPORT_SOURCE,
-    PACKAGE_IMPORT_SOURCE,
-    TOP_LEVEL_IMPORT_SOURCE,
-)
 
 from amaranth_sim_mcp import runner
 from amaranth_sim_mcp.runner import SimulationRequestError, run_simulation_request
@@ -75,13 +69,10 @@ def test_run_simulation_request_definitions_mode_returns_post_tick_trace(
 
 
 def test_run_simulation_request_definitions_mode_supports_loose_file_sibling_imports(
-    tmp_path, write_design, cleanup_vcd
+    top_level_import_design, cleanup_vcd
 ):
-    (tmp_path / "helper.py").write_text("STEP = 1\n", encoding="utf-8")
-    design_path = write_design("main.py", TOP_LEVEL_IMPORT_SOURCE)
-
     result = run_simulation_request(
-        design_path,
+        top_level_import_design,
         "definitions",
         observe=["count"],
         cycles=3,
@@ -92,13 +83,10 @@ def test_run_simulation_request_definitions_mode_supports_loose_file_sibling_imp
 
 
 def test_run_simulation_request_definitions_mode_supports_lazy_imports_during_simulation(
-    tmp_path, write_design, cleanup_vcd
+    lazy_import_design, cleanup_vcd
 ):
-    (tmp_path / "helper.py").write_text("STEP = 1\n", encoding="utf-8")
-    design_path = write_design("main.py", LAZY_IMPORT_SOURCE)
-
     result = run_simulation_request(
-        design_path,
+        lazy_import_design,
         "definitions",
         observe=["count"],
         cycles=3,
@@ -221,15 +209,10 @@ def test_run_simulation_request_reports_structured_syntax_errors(write_design):
 
 
 def test_run_simulation_request_definitions_mode_supports_nested_package_layouts(
-    write_design, cleanup_vcd
+    package_import_design, cleanup_vcd
 ):
-    design_path = write_design("my_pkg/design.py", PACKAGE_IMPORT_SOURCE)
-    package_dir = design_path.parent
-    (package_dir / "__init__.py").write_text("", encoding="utf-8")
-    (package_dir / "helpers.py").write_text("STEP = 1\n", encoding="utf-8")
-
     result = run_simulation_request(
-        design_path,
+        package_import_design,
         "definitions",
         observe=["count"],
         cycles=3,
@@ -283,9 +266,9 @@ def test_run_simulation_request_expands_user_in_vcd_dir(
 
 
 def test_run_simulation_request_timeout_reports_last_completed_cycle(
-    monkeypatch, tmp_path, write_design
+    monkeypatch, tmp_path, fast_counter_design
 ):
-    design_path = write_design("counter.py", FAST_COUNTER_SOURCE)
+    design_path = fast_counter_design
 
     class FakeProcess:
         def __init__(self):

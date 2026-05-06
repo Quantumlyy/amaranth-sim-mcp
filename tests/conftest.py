@@ -7,117 +7,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _designs import (
+    COUNTER_SOURCE,
+    FAST_COUNTER_SOURCE,
+    LAZY_IMPORT_SOURCE,
+    NESTED_COUNTER_SOURCE,
+    PACKAGE_IMPORT_SOURCE,
+    TOP_LEVEL_IMPORT_SOURCE,
+)
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from amaranth_sim_mcp.server import mcp
-
-COUNTER_SOURCE = """\
-from amaranth import Elaboratable, ClockDomain, Module, Signal
-
-
-class Counter(Elaboratable):
-    def __init__(self):
-        self.en = Signal()
-        self.count = Signal(8)
-
-    def elaborate(self, platform):
-        m = Module()
-        m.domains.sync = ClockDomain()
-        with m.If(self.en):
-            m.d.sync += self.count.eq(self.count + 1)
-        return m
-"""
-
-
-FAST_COUNTER_SOURCE = """\
-from amaranth import Elaboratable, ClockDomain, Module, Signal
-
-
-class Counter(Elaboratable):
-    def __init__(self):
-        self.en = Signal(init=1)
-        self.count = Signal(32)
-
-    def elaborate(self, platform):
-        m = Module()
-        m.domains.sync = ClockDomain()
-        with m.If(self.en):
-            m.d.sync += self.count.eq(self.count + 1)
-        return m
-"""
-
-
-NESTED_COUNTER_SOURCE = """\
-from amaranth import Elaboratable, ClockDomain, Module, Signal
-
-
-class Alu:
-    def __init__(self):
-        self.result = Signal(8)
-        self.valid = Signal()
-
-
-class Wrapper(Elaboratable):
-    def __init__(self):
-        self.en = Signal()
-        self.alu = Alu()
-
-    def elaborate(self, platform):
-        m = Module()
-        m.domains.sync = ClockDomain()
-        return m
-"""
-
-
-TOP_LEVEL_IMPORT_SOURCE = """\
-from helper import STEP
-from amaranth import Elaboratable, ClockDomain, Module, Signal
-
-
-class Counter(Elaboratable):
-    def __init__(self):
-        self.count = Signal(8)
-
-    def elaborate(self, platform):
-        m = Module()
-        m.domains.sync = ClockDomain()
-        m.d.sync += self.count.eq(self.count + STEP)
-        return m
-"""
-
-
-LAZY_IMPORT_SOURCE = """\
-from amaranth import Elaboratable, ClockDomain, Module, Signal
-
-
-class Counter(Elaboratable):
-    def __init__(self):
-        self.count = Signal(8)
-
-    def elaborate(self, platform):
-        from helper import STEP
-        m = Module()
-        m.domains.sync = ClockDomain()
-        m.d.sync += self.count.eq(self.count + STEP)
-        return m
-"""
-
-
-PACKAGE_IMPORT_SOURCE = """\
-from .helpers import STEP
-from amaranth import Elaboratable, ClockDomain, Module, Signal
-
-
-class Counter(Elaboratable):
-    def __init__(self):
-        self.count = Signal(8)
-
-    def elaborate(self, platform):
-        m = Module()
-        m.domains.sync = ClockDomain()
-        m.d.sync += self.count.eq(self.count + STEP)
-        return m
-"""
 
 
 @pytest.fixture
@@ -140,9 +40,39 @@ def counter_design(write_design: Callable[[str, str], Path]) -> Path:
 
 
 @pytest.fixture
+def fast_counter_design(write_design: Callable[[str, str], Path]) -> Path:
+    """A wide enabled Counter that runs quickly past many cycles."""
+    return write_design("counter.py", FAST_COUNTER_SOURCE)
+
+
+@pytest.fixture
 def nested_design(write_design: Callable[[str, str], Path]) -> Path:
     """A Wrapper Elaboratable with a nested non-Elaboratable Alu submodule."""
     return write_design("nested.py", NESTED_COUNTER_SOURCE)
+
+
+@pytest.fixture
+def top_level_import_design(tmp_path: Path, write_design: Callable[[str, str], Path]) -> Path:
+    """A Counter design that imports `STEP` from a sibling `helper.py`."""
+    (tmp_path / "helper.py").write_text("STEP = 1\n", encoding="utf-8")
+    return write_design("main.py", TOP_LEVEL_IMPORT_SOURCE)
+
+
+@pytest.fixture
+def lazy_import_design(tmp_path: Path, write_design: Callable[[str, str], Path]) -> Path:
+    """A Counter that imports `STEP` from `helper.py` lazily inside elaborate()."""
+    (tmp_path / "helper.py").write_text("STEP = 1\n", encoding="utf-8")
+    return write_design("main.py", LAZY_IMPORT_SOURCE)
+
+
+@pytest.fixture
+def package_import_design(write_design: Callable[[str, str], Path]) -> Path:
+    """A Counter inside `my_pkg/` that imports from `.helpers`."""
+    design_path = write_design("my_pkg/design.py", PACKAGE_IMPORT_SOURCE)
+    package_dir = design_path.parent
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "helpers.py").write_text("STEP = 1\n", encoding="utf-8")
+    return design_path
 
 
 @pytest.fixture
