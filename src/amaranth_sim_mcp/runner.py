@@ -93,6 +93,15 @@ def run_simulation_request(
         timeout_seconds,
     )
 
+    # Resolve vcd_dir to an absolute path: the worker is launched with
+    # cwd=design.parent, so a relative or `~/...` value would be
+    # interpreted against that and the returned VCD path would be
+    # un-openable from the parent's cwd.
+    if vcd_dir is not None:
+        resolved_vcd_dir: str | None = str((Path.cwd() / Path(vcd_dir).expanduser()).resolve())
+    else:
+        resolved_vcd_dir = None
+
     request = {
         "file_path": str(path),
         "mode": mode,
@@ -103,7 +112,7 @@ def run_simulation_request(
         "stimulus": list(stimulus or []),
         "cycles": cycles,
         "timeout_seconds": timeout_seconds,
-        "vcd_dir": str(vcd_dir) if vcd_dir is not None else None,
+        "vcd_dir": resolved_vcd_dir,
     }
 
     progress_path = _create_progress_file()

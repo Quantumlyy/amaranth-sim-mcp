@@ -239,6 +239,49 @@ def test_run_simulation_request_definitions_mode_supports_nested_package_layouts
     assert [sample["signals"]["count"] for sample in result["trace"]] == [1, 2, 3]
 
 
+def test_run_simulation_request_resolves_relative_vcd_dir(
+    counter_design, cleanup_vcd, tmp_path, monkeypatch
+):
+    """A relative `vcd_dir` must be resolved against the caller's cwd, not the worker's."""
+    output_root = tmp_path / "outputs"
+    monkeypatch.chdir(tmp_path)
+
+    result = run_simulation_request(
+        counter_design,
+        "definitions",
+        cycles=1,
+        vcd_dir="outputs",
+    )
+    cleanup_vcd(result["vcd_path"])
+
+    vcd_path = Path(result["vcd_path"])
+    assert vcd_path.is_absolute()
+    assert vcd_path.is_file()
+    assert vcd_path.parent == output_root.resolve()
+
+
+def test_run_simulation_request_expands_user_in_vcd_dir(
+    counter_design, cleanup_vcd, tmp_path, monkeypatch
+):
+    """`~/...` in `vcd_dir` must be expanded before being sent to the worker."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    result = run_simulation_request(
+        counter_design,
+        "definitions",
+        cycles=1,
+        vcd_dir="~/vcds",
+    )
+    cleanup_vcd(result["vcd_path"])
+
+    vcd_path = Path(result["vcd_path"])
+    assert vcd_path.is_absolute()
+    assert vcd_path.is_file()
+    assert vcd_path.parent == (home / "vcds").resolve()
+
+
 def test_run_simulation_request_timeout_reports_last_completed_cycle(
     monkeypatch, tmp_path, write_design
 ):
