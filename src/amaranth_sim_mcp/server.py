@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import atexit
 import importlib.metadata
+import logging
 import platform
+import shutil
 import sys
+import tempfile
+import threading
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -14,9 +19,29 @@ from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from . import __version__
-from .runner import SimulationRequestError, run_simulation_request
+from .runner import DEFAULT_CYCLES, SimulationRequestError, run_simulation_request
 
+logger = logging.getLogger("amaranth_sim_mcp")
 mcp = FastMCP("amaranth-sim-mcp")
+
+_vcd_dir: Path | None = None
+_vcd_dir_lock = threading.Lock()
+
+
+def _get_or_create_vcd_dir() -> Path:
+    """Lazily create the per-server VCD directory and register cleanup.
+
+    Avoids a filesystem side effect at module import; the directory is
+    only created when a definitions-mode simulate call needs it. Cleanup
+    is registered with `atexit` the first time, so the directory is
+    removed when the server process exits regardless.
+    """
+    global _vcd_dir
+    with _vcd_dir_lock:
+        if _vcd_dir is None:
+            _vcd_dir = Path(tempfile.mkdtemp(prefix="amaranth-sim-mcp-vcd-"))
+            atexit.register(shutil.rmtree, _vcd_dir, ignore_errors=True)
+        return _vcd_dir
 
 
 @mcp.tool()
@@ -27,7 +52,11 @@ def simulate(
     ],
     mode: Annotated[
         str,
-        Field(description="Either 'script' (run file as-is) or 'definitions' (load class and build testbench)"),
+        Field(
+            description=(
+                "Either 'script' (run file as-is) or 'definitions' (load class and build testbench)"
+            ),
+        ),
     ],
     class_name: Annotated[
         str | None,
@@ -43,16 +72,25 @@ def simulate(
     ] = None,
     observe: Annotated[
         list[str] | None,
-        Field(description="For 'definitions' mode: signal paths to record (dotted for nested, e.g., 'alu.result')"),
+        Field(
+            description=(
+                "For 'definitions' mode: signal paths to record "
+                "(dotted for nested, e.g., 'alu.result')"
+            ),
+        ),
     ] = None,
     stimulus: Annotated[
         list[dict[str, Any]] | None,
-        Field(description="For 'definitions' mode: list of {'cycle': N, 'set': {'sig': val}} events"),
+        Field(
+            description=(
+                "For 'definitions' mode: list of {'cycle': N, 'set': {'sig': val}} events"
+            ),
+        ),
     ] = None,
     cycles: Annotated[
         int,
         Field(description="For 'definitions' mode: number of cycles to simulate"),
-    ] = 100,
+    ] = DEFAULT_CYCLES,
 ) -> dict[str, Any]:
     """
     Run an Amaranth simulation in either `script` or `definitions` mode.
@@ -78,6 +116,10 @@ def simulate(
 
     In v1, `stimulus.domain` must be omitted or match the resolved primary
     clock domain; multi-domain stimulus timing is not synchronized yet.
+
+    VCD files for `definitions` mode are written under a per-server
+    temporary directory and removed when the server process exits, so
+    inspect or copy them before shutting the server down.
     """
 
     try:
@@ -90,6 +132,7 @@ def simulate(
             observe=observe,
             stimulus=stimulus,
             cycles=cycles,
+            vcd_dir=_get_or_create_vcd_dir() if mode == "definitions" else None,
         )
     except SimulationRequestError as exc:
         raise ToolError(str(exc)) from exc
@@ -111,4 +154,5 @@ def check_environment() -> dict[str, str]:
 
 
 def main() -> None:
+    logger.info("amaranth-sim-mcp starting (server_version=%s)", __version__)
     mcp.run()

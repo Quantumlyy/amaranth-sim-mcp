@@ -39,5 +39,35 @@ amaranth-sim-mcp = "amaranth_sim_mcp.__main__:main"
 
 [dependency-groups]
 dev = [
+  "mypy",
   "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-timeout",
+  "ruff",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+extend-select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = "amaranth.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+timeout = 60

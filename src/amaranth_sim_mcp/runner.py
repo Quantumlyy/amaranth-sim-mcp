@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import io
 import json
+import logging
 import os
 import runpy
 import subprocess
@@ -15,20 +16,27 @@ import threading
 import time
 import traceback
 from collections import defaultdict
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from amaranth.hdl import Value, ValueCastable
 from amaranth.hdl._ir import Fragment
 from amaranth.sim import Simulator
 
+from ._paths import temporary_sys_path
 from .errors import SimulationRequestError
 from .loader import load_definitions_module, select_elaboratable_class
 
-DEFAULT_CLOCKS: dict[str, float] = {"sync": 1e-6}
+DEFAULT_SYNC_PERIOD_SECONDS = 1e-6
+DEFAULT_CLOCKS: dict[str, float] = {"sync": DEFAULT_SYNC_PERIOD_SECONDS}
+DEFAULT_CYCLES = 100
 WORKER_TIMEOUT_SECONDS = 30.0
+WATCHDOG_GRACE_SECONDS = 5.0
+VCD_RANDOM_SUFFIX_BYTES = 4
+
+logger = logging.getLogger("amaranth_sim_mcp")
 
 
 @dataclass(frozen=True)
@@ -52,18 +60,21 @@ def run_simulation_request(
     init_kwargs: Mapping[str, Any] | None = None,
     clocks: Mapping[str, float] | None = None,
     observe: list[str] | None = None,
-    stimulus: list[Mapping[str, Any]] | None = None,
-    cycles: int = 100,
+    stimulus: Sequence[Mapping[str, Any]] | None = None,
+    cycles: int = DEFAULT_CYCLES,
     *,
     timeout_seconds: float = WORKER_TIMEOUT_SECONDS,
+    vcd_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    """Run a simulation request in an isolated worker subprocess."""
+    """Run a simulation request in an isolated worker subprocess.
 
-    path = Path(file_path).expanduser()
-    if not path.is_absolute():
-        path = (Path.cwd() / path).resolve()
-    else:
-        path = path.resolve()
+    `vcd_dir` controls where definitions-mode VCDs are written. If `None`,
+    the system temp dir is used (paths are leaked to the caller's
+    responsibility); pass a server-owned directory if you want lifetime
+    bounded by the calling process.
+    """
+
+    path = (Path.cwd() / Path(file_path).expanduser()).resolve()
 
     if not path.is_file():
         raise SimulationRequestError(f"File not found: {path}")
@@ -73,6 +84,23 @@ def run_simulation_request(
         raise SimulationRequestError("mode must be either 'script' or 'definitions'.")
     if cycles < 0:
         raise SimulationRequestError("cycles must be greater than or equal to 0.")
+
+    logger.info(
+        "starting simulation: file=%s mode=%s cycles=%d timeout=%.1fs",
+        path,
+        mode,
+        cycles,
+        timeout_seconds,
+    )
+
+    # Resolve vcd_dir to an absolute path: the worker is launched with
+    # cwd=design.parent, so a relative or `~/...` value would be
+    # interpreted against that and the returned VCD path would be
+    # un-openable from the parent's cwd.
+    if vcd_dir is not None:
+        resolved_vcd_dir: str | None = str((Path.cwd() / Path(vcd_dir).expanduser()).resolve())
+    else:
+        resolved_vcd_dir = None
 
     request = {
         "file_path": str(path),
@@ -84,6 +112,7 @@ def run_simulation_request(
         "stimulus": list(stimulus or []),
         "cycles": cycles,
         "timeout_seconds": timeout_seconds,
+        "vcd_dir": resolved_vcd_dir,
     }
 
     progress_path = _create_progress_file()
@@ -104,22 +133,25 @@ def run_simulation_request(
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
+            logger.info("simulation timed out after %.1fs; killing worker", timeout_seconds)
             with contextlib.suppress(Exception):
                 proc.kill()
             with contextlib.suppress(Exception):
                 proc.communicate(timeout=1)
             last_cycle = _read_progress(progress_path)
-            raise SimulationRequestError(_format_timeout_message(timeout_seconds, last_cycle)) from exc
+            raise SimulationRequestError(
+                _format_timeout_message(timeout_seconds, last_cycle)
+            ) from exc
 
         payload = _parse_worker_response(stdout or "", stderr or "", proc.returncode)
-        if not payload["ok"]:
+        if not payload.get("ok", False):
             error = payload.get("error", {})
             message = error.get("message", "Simulation failed.")
             traceback_text = error.get("traceback")
             if traceback_text:
                 message = f"{message}\n\nTraceback:\n{traceback_text.rstrip()}"
             raise SimulationRequestError(message)
-        return payload["result"]
+        return cast(dict[str, Any], payload["result"])
     finally:
         progress_path.unlink(missing_ok=True)
 
@@ -136,6 +168,15 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _worker_main() -> None:
+    # The parent uses our stdout for the JSON response payload, so any
+    # incidental writes (logging the user configured to sys.stdout, prints
+    # from elaborate(), etc.) must not reach it. Reserve the real stdout
+    # and redirect sys.stdout to sys.stderr for the entire worker lifetime
+    # so that any thread still running after the payload is written cannot
+    # corrupt the IPC channel.
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+
     raw_request = sys.stdin.read()
     try:
         request = json.loads(raw_request)
@@ -154,8 +195,9 @@ def _worker_main() -> None:
             },
         }
 
-    sys.stdout.write(json.dumps(payload))
-    sys.stdout.flush()
+    real_stdout.write(json.dumps(payload))
+    real_stdout.flush()
+    sys.exit(0)
 
 
 def _run_worker_request(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -178,7 +220,7 @@ def _run_script_mode(request: Mapping[str, Any]) -> dict[str, Any]:
     try:
         with (
             _temporary_cwd(cwd),
-            _temporary_sys_path([str(cwd)]),
+            temporary_sys_path([str(cwd)]),
             _temporary_argv([str(file_path)]),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -212,7 +254,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
     clocks = dict(DEFAULT_CLOCKS if raw_clocks is None else raw_clocks)
     observe = request.get("observe")
     stimulus = list(request.get("stimulus") or [])
-    cycles = int(request.get("cycles", 100))
+    cycles = int(request.get("cycles", DEFAULT_CYCLES))
     progress_path = Path(str(request["progress_path"]))
 
     if not clocks:
@@ -232,7 +274,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
             f"Failed to load '{file_path}': {type(exc).__name__}: {exc}"
         ) from exc
 
-    with _temporary_cwd(file_path.parent), _temporary_sys_path(loader_path_entries):
+    with _temporary_cwd(file_path.parent), temporary_sys_path(loader_path_entries):
         try:
             dut_class = select_elaboratable_class(module, class_name)
         except ValueError as exc:
@@ -250,10 +292,7 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         primary_domain = "sync" if "sync" in clocks else next(iter(clocks))
 
         observe_paths = list(observe) if observe is not None else _default_observe_paths(dut)
-        observed_targets = {
-            path: _resolve_signal_path(dut, path)
-            for path in observe_paths
-        }
+        observed_targets = {path: _resolve_signal_path(dut, path) for path in observe_paths}
         for path, target in observed_targets.items():
             _validate_signal_target(dut, path, target)
 
@@ -262,7 +301,19 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
         sim = Simulator(dut)
         for domain, period in clocks.items():
             sim.add_clock(period, domain=domain)
-        vcd_path = str(Path(tempfile.gettempdir()) / f"amaranth_sim_{os.urandom(4).hex()}.vcd")
+        vcd_suffix = os.urandom(VCD_RANDOM_SUFFIX_BYTES).hex()
+        raw_vcd_dir = request.get("vcd_dir")
+        vcd_root = Path(str(raw_vcd_dir)) if raw_vcd_dir else Path(tempfile.gettempdir())
+        try:
+            vcd_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SimulationRequestError(
+                f"Failed to create VCD directory '{vcd_root}': {type(exc).__name__}: {exc}"
+            ) from exc
+        vcd_path = str(vcd_root / f"amaranth_sim_{vcd_suffix}.vcd")
+        logger.debug(
+            "definitions mode: vcd=%s observed=%d signals", vcd_path, len(observed_targets)
+        )
 
         trace: list[dict[str, Any]] = []
 
@@ -274,7 +325,8 @@ def _run_definitions_mode(request: Mapping[str, Any]) -> dict[str, Any]:
                             ctx.set(assignment.target, assignment.value)
                         except Exception as exc:
                             raise SimulationRequestError(
-                                f"Failed to set signal '{assignment.path}': {type(exc).__name__}: {exc}"
+                                f"Failed to set signal '{assignment.path}': "
+                                f"{type(exc).__name__}: {exc}"
                             ) from exc
 
                 await ctx.tick(primary_domain)
@@ -326,7 +378,8 @@ def _resolve_stimulus_events(
         cycle = raw_event.get("cycle")
         if not isinstance(cycle, int) or cycle < 0:
             raise SimulationRequestError(
-                f"Stimulus event at index {index} has invalid cycle {cycle!r}; cycle must be a non-negative integer."
+                f"Stimulus event at index {index} has invalid cycle {cycle!r}; "
+                "cycle must be a non-negative integer."
             )
 
         assignments: list[ResolvedAssignment] = []
@@ -348,13 +401,15 @@ def _resolve_stimulus_events(
         domain = raw_event.get("domain")
         if domain is not None and not isinstance(domain, str):
             raise SimulationRequestError(
-                f"Stimulus event at cycle {cycle} has invalid domain {domain!r}; domain must be a string if provided."
+                f"Stimulus event at cycle {cycle} has invalid domain {domain!r}; "
+                "domain must be a string if provided."
             )
         normalized_domain = primary_domain if domain is None else domain
         if normalized_domain != primary_domain:
             raise SimulationRequestError(
                 f"Stimulus event at cycle {cycle} targets domain '{normalized_domain}', "
-                f"but only the primary domain '{primary_domain}' is currently supported for stimulus timing."
+                f"but only the primary domain '{primary_domain}' is currently supported "
+                "for stimulus timing."
             )
 
         events_by_cycle[cycle].append(
@@ -507,13 +562,22 @@ def _parse_worker_response(stdout: str, stderr: str, returncode: int) -> dict[st
     if stdout.strip():
         try:
             payload = json.loads(stdout)
-            if isinstance(payload, dict):
-                return payload
         except json.JSONDecodeError:
-            pass
+            payload = None
+        if isinstance(payload, dict) and _is_well_formed_worker_response(payload):
+            return payload
 
     message = stderr.strip() or stdout.strip() or f"Worker exited with return code {returncode}."
     return {"ok": False, "error": {"message": message}}
+
+
+def _is_well_formed_worker_response(payload: Mapping[str, Any]) -> bool:
+    ok = payload.get("ok")
+    if not isinstance(ok, bool):
+        return False
+    if ok:
+        return isinstance(payload.get("result"), dict)
+    return isinstance(payload.get("error"), dict)
 
 
 def _create_progress_file() -> Path:
@@ -573,7 +637,12 @@ def _start_worker_watchdog(timeout_seconds: float) -> None:
 
 
 def _worker_watchdog_main(timeout_seconds: float) -> None:
-    time.sleep(max(timeout_seconds, 0.0) + 5.0)
+    time.sleep(max(timeout_seconds, 0.0) + WATCHDOG_GRACE_SECONDS)
+    logger.warning(
+        "watchdog firing after %.1fs (configured timeout %.1fs); calling os._exit(1)",
+        max(timeout_seconds, 0.0) + WATCHDOG_GRACE_SECONDS,
+        timeout_seconds,
+    )
     os._exit(1)
 
 
@@ -588,16 +657,6 @@ def _temporary_cwd(path: Path) -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _temporary_sys_path(entries: list[str]) -> Iterator[None]:
-    original = list(sys.path)
-    sys.path[:0] = entries
-    try:
-        yield
-    finally:
-        sys.path[:] = original
-
-
-@contextlib.contextmanager
 def _temporary_argv(argv: list[str]) -> Iterator[None]:
     original = list(sys.argv)
     sys.argv[:] = argv
@@ -609,8 +668,9 @@ def _temporary_argv(argv: list[str]) -> Iterator[None]:
 
 __all__ = [
     "DEFAULT_CLOCKS",
-    "SimulationRequestError",
+    "DEFAULT_CYCLES",
     "WORKER_TIMEOUT_SECONDS",
+    "SimulationRequestError",
     "main",
     "run_simulation_request",
 ]

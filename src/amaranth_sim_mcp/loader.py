@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import ast
-import contextlib
 import hashlib
 import importlib.util
 import inspect
 import sys
 import types
 from pathlib import Path
-from typing import Iterator
 
 from amaranth.hdl import Elaboratable
 
+from ._paths import temporary_sys_path
 from .errors import SimulationRequestError
 
 
@@ -50,7 +49,7 @@ def load_definitions_module(
     previous_module = sys.modules.get(module_name)
     sys.modules[module_name] = module
     try:
-        with _temporary_sys_path(extra_paths):
+        with temporary_sys_path(extra_paths):
             exec(code, module.__dict__)
     except ImportError as exc:
         if previous_module is None:
@@ -106,9 +105,7 @@ def select_elaboratable_class(
         return next(iter(classes.values()))
 
     if not classes:
-        raise ValueError(
-            "No Elaboratable subclasses were found in the module."
-        )
+        raise ValueError("No Elaboratable subclasses were found in the module.")
 
     raise ValueError(
         "Multiple Elaboratable subclasses were found; pass class_name explicitly. "
@@ -117,7 +114,10 @@ def select_elaboratable_class(
 
 
 def _keep_top_level_statement(node: ast.stmt) -> bool:
-    if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+    if isinstance(
+        node,
+        (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
         return True
     if isinstance(node, ast.Assign):
         # Known limitation: assignments like WIDTH = calc() are stripped because
@@ -196,13 +196,3 @@ def _format_import_error(path: Path, exc: ImportError, extra_paths: list[str]) -
         f"import target into the project root, or install it into the Python "
         f"environment used to run the server."
     )
-
-
-@contextlib.contextmanager
-def _temporary_sys_path(entries: list[str]) -> Iterator[None]:
-    original = list(sys.path)
-    sys.path[:0] = entries
-    try:
-        yield
-    finally:
-        sys.path[:] = original
